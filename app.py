@@ -1,70 +1,88 @@
-# app.py (معدل لتحسين الفهم بالكلمات المفتاحية + top-k embeddings)
+# ============================================
+# 🤖 chatbot AI - FAQ System using Embeddings + Keywords
+# ============================================
+
 from flask import Flask, request, jsonify
 from sentence_transformers import SentenceTransformer
 from sklearn.neighbors import NearestNeighbors
 import google.generativeai as genai
-import json
-import os
-import requests
+import json, os, re, requests
 from bs4 import BeautifulSoup
-import re
 
+# --------------------------------------------
+#  إعدادات عامة
+# --------------------------------------------
 app = Flask(__name__)
-genai.configure(api_key="AIzaSyBEeidGnK_uyf9ikJWW9elsAgDdz8t09oA")  # ← ضع هنا API KEY بتاع Gemini
 
+# مفتاح واجهة Gemini
+genai.configure(api_key="AIzaSyBEeidGnK_uyf9ikJWW9elsAgDdz8t09oA")
+
+# مسار ملف الأسئلة والإجابات
 FAQ_PATH = os.path.join(os.path.dirname(__file__), "faq.json")
+
+# نموذج تحويل النصوص إلى Embeddings (نموذج خفيف وسريع)
 embedder = SentenceTransformer("all-MiniLM-L6-v2")
 
-# --- معلمات قابلة للتعديل ---
-TOP_K = 5
-EMB_WEIGHT = 0.7
-TOKEN_WEIGHT = 0.3
-COMBINED_THRESHOLD = 0.60   # لو أقل من كده، ما نرجعش إجابة مباشرة
-EMB_MIN_ACCEPT = 0.62       # حد أدنى للتشابه بالـ embedding لقبول نتيجة حتى لو token overlap قليل
-TOKEN_MIN_ACCEPT = 0.15     # حد أدنى لتداخل الكلمات لقبول نتيجة لو الembedding قوي
+# --------------------------------------------
+#  معلمات يمكن تعديلها
+# --------------------------------------------
+TOP_K = 5                # كم نتيجة يبحث عنها في كل مرة
+EMB_WEIGHT = 0.7         # وزن تشابه الـ Embeddings
+TOKEN_WEIGHT = 0.3       # وزن تطابق الكلمات
+COMBINED_THRESHOLD = 0.60
+EMB_MIN_ACCEPT = 0.62
+TOKEN_MIN_ACCEPT = 0.15
 
-# قائمة Stopwords عربية بسيطة (وسعها لو تحب)
+# --------------------------------------------
+#  كلمات شائعة (Stopwords) يتم تجاهلها في البحث
+# --------------------------------------------
 ARABIC_STOPWORDS = {
-    "في","من","ما","هي","ماهي","ما هي","لم","عن","على","و","او","أو",
-    "هل","كيف","أين","كم","هذا","هذه","ذلك","تكون","يكون","هو","هي","إلى","ب"
+    "في", "من", "ما", "هي", "ماهي", "ما هي", "لم", "عن", "على", "و", "او", "أو",
+    "هل", "كيف", "أين", "كم", "هذا", "هذه", "ذلك", "تكون", "يكون", "هو", "هي", "إلى", "ب"
 }
 
-# --- متغيرات الذاكرة في الذاكرة (runtime) ---
+# --------------------------------------------
+#  متغيرات الذاكرة في runtime
+# --------------------------------------------
 questions = []
 answers = []
-token_sets = []   # قائمة مجموعات الكلمات لكل سؤال محفوظ
+token_sets = []
 nn_model = NearestNeighbors(n_neighbors=1, metric="cosine")
 last_added_question = None
 
-# --- دوال مساعدة لتطبيع النص واستخراج الكلمات ---
+# --------------------------------------------
+#  دوال مساعدة لتنظيف وتحليل النص
+# --------------------------------------------
+
 def remove_diacritics(text: str) -> str:
-    # يزيل التشكيل (تريليجيات بسيطة)
+    """إزالة التشكيل من النص العربي"""
     return re.sub(r'[\u0610-\u061A\u064B-\u065F\u06D6-\u06ED]', '', text)
 
 def normalize_ar(text: str) -> str:
+    """تحويل النص لحروف عربية فقط بدون رموز أو تشكيل"""
     t = text.lower()
     t = remove_diacritics(t)
-    # أبقي الحروف العربية والمسافات فقط
     t = re.sub(r'[^\u0600-\u06FF\s]', ' ', t)
-    t = re.sub(r'\s+', ' ', t).strip()
-    return t
+    return re.sub(r'\s+', ' ', t).strip()
 
 def tokens_from_text(text: str):
+    """استخراج الكلمات الهامة فقط (بدون stopwords)"""
     t = normalize_ar(text)
-    toks = [w for w in t.split() if w and w not in ARABIC_STOPWORDS]
-    return toks
+    return [w for w in t.split() if w and w not in ARABIC_STOPWORDS]
 
 def token_overlap_score(query_tokens, cand_tokens):
+    """حساب نسبة تداخل الكلمات بين سؤالين"""
     if not cand_tokens:
         return 0.0
-    qset = set(query_tokens)
-    cset = set(cand_tokens)
-    inter = qset.intersection(cset)
-    return len(inter) / max(len(cset), 1)
+    qset, cset = set(query_tokens), set(cand_tokens)
+    return len(qset.intersection(cset)) / max(len(cset), 1)
 
+# --------------------------------------------
+#  تحميل وتحديث قاعدة البيانات
+# --------------------------------------------
 
-# --- IO: تحميل و تحديث faq.json و بناء الـ index --- 
 def load_faq_data():
+    """قراءة ملف faq.json"""
     if not os.path.exists(FAQ_PATH):
         return []
     try:
@@ -74,8 +92,8 @@ def load_faq_data():
         return []
 
 def build_index_from_memory():
-    global questions, answers, token_sets, nn_model
-    # إعادة بناء الـ index من القوائم questions/answers
+    """إعادة بناء نموذج البحث (index)"""
+    global nn_model
     if not questions:
         return
     embeddings = embedder.encode(questions, show_progress_bar=False)
@@ -84,175 +102,194 @@ def build_index_from_memory():
     nn_model.fit(embeddings)
 
 def initialize_memory():
+    """تحميل البيانات عند بدء التشغيل"""
     global questions, answers, token_sets
     data = load_faq_data()
-    questions = [item["question"] for item in data]
-    answers = [item["answer"] for item in data]
+    questions = [d["question"] for d in data]
+    answers = [d["answer"] for d in data]
     token_sets = [tokens_from_text(q) for q in questions]
     if questions:
         build_index_from_memory()
+        print(f" تم تحميل {len(questions)} سؤال من قاعدة البيانات.")
+        print(" تم بناء موديل الأسئلة (Embeddings index) بنجاح.")
+    else:
+        print(" لا توجد أسئلة محفوظة بعد.")
 
 initialize_memory()
 
+# --------------------------------------------
+#  تحديث أو إضافة سؤال جديد
+# --------------------------------------------
 
-# --- تحديث/حفظ سؤال وإجابة (update إذا مشابه) ---
 def save_or_update_qa(question, answer):
+    """تحديث أو إضافة سؤال جديد لقاعدة البيانات"""
     global questions, answers, token_sets
 
-    # تحميل الملف
-    if not os.path.exists(FAQ_PATH):
-        data = []
-    else:
-        with open(FAQ_PATH, "r", encoding="utf-8") as f:
-            try:
-                data = json.load(f)
-            except:
-                data = []
-
+    data = load_faq_data()
     q_toks = tokens_from_text(question)
     found_idx = None
 
-    # دور على سؤال مشابه في الذاكرة
+    # فحص وجود سؤال مشابه
     for i, q in enumerate(questions):
-        overlap = token_overlap_score(q_toks, token_sets[i])
-        if overlap >= 0.6:
+        if token_overlap_score(q_toks, token_sets[i]) >= 0.6:
             found_idx = i
             break
 
-    # تحديث أو إضافة
+    # لو موجود: حدث الإجابة
     if found_idx is not None:
         old_q = questions[found_idx]
-        # عدل في الملف
-        updated = False
         for item in data:
             if item["question"].strip() == old_q.strip():
                 item["answer"] = answer
-                updated = True
                 break
-        if not updated:
-            data.append({"question": question, "answer": answer})
         answers[found_idx] = answer
     else:
+        # لو غير موجود: أضف سؤال جديد
         data.append({"question": question, "answer": answer})
         questions.append(question)
         answers.append(answer)
         token_sets.append(q_toks)
 
-    # اكتب الملف من جديد
+    # حفظ الملف
     with open(FAQ_PATH, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-    # أعد بناء الـ index
     build_index_from_memory()
 
-# --- Scraping بسيط من الصفحة (غيري selectors حسب موقعك) ---
+# --------------------------------------------
+#  Web Scraping بسيط (اختياري)
+# --------------------------------------------
+
 def get_answer_from_url(question):
-    url = "https://www.mueen.com.sa/ar/"  # ← عدّليها للصفحة اللي فيها FAQ
+    """محاولة استخراج الإجابة من موقع خارجي (كمصدر بديل)"""
+    url = "https://www.mueen.com.sa/ar/"
     try:
         resp = requests.get(url, timeout=10)
         soup = BeautifulSoup(resp.text, "html.parser")
 
-        # هنا نفترض وجود بلوكات FAQ — عدلي selectors حسب الصفحة الحقيقية
         for block in soup.select(".faq-item"):
             q = block.select_one(".faq-question")
             a = block.select_one(".faq-answer")
-            if not q or not a:
-                continue
-            q_text = q.get_text(strip=True)
-            a_text = a.get_text(strip=True)
-            # تطبيع ومقارنة بسيطة: كلمة مشتركة واحدة كافية كاختبار أولي
-            q_toks = tokens_from_text(q_text)
-            user_toks = tokens_from_text(question)
-            if token_overlap_score(user_toks, q_toks) > 0:
-                return a_text
+            if q and a:
+                q_text, a_text = q.get_text(strip=True), a.get_text(strip=True)
+                if token_overlap_score(tokens_from_text(question), tokens_from_text(q_text)) > 0:
+                    return a_text
     except Exception as e:
         print("scraping error:", e)
     return None
 
+# --------------------------------------------
+#  البحث عن أفضل إجابة (core logic)
+# --------------------------------------------
 
-# --- دالة البحث الأفضل (top-k + keywords fusion) ---
 def get_best_answer(user_input):
+    """البحث في الموديل للعثور على أقرب إجابة"""
     global last_added_question
 
     user_toks = tokens_from_text(user_input)
 
-    # إذا ما فيش أسئلة محفوظة بعد:
+    # لو ما فيش أسئلة بعد
     if not questions:
-        # حاول Scrape وجايب جواب؟ خزّنه وارجعه
         scraped = get_answer_from_url(user_input)
         if scraped:
             save_or_update_qa(user_input, scraped)
             return scraped
-        # ما لقيناش → خزّن placeholder
         save_or_update_qa(user_input, "سيتم التعديل على الإجابة لاحقاً")
-        last_added_question = user_input
         return "لم أجد إجابة مناسبة حالياً، يمكنك أن تخبرني بالرد الصحيح."
 
-    # حساب embeddings و top-k
+    # حساب الـ Embedding للسؤال الجديد
     q_vec = embedder.encode([user_input])
     k = min(TOP_K, len(questions))
     dist, idxs = nn_model.kneighbors(q_vec, n_neighbors=k)
-    best_score = -1.0
-    best_idx = None
-    best_emb_sim = 0.0
-    best_tok_overlap = 0.0
+
+    best_idx, best_score = None, -1
 
     for rank, cand_idx in enumerate(idxs[0]):
         emb_sim = 1 - dist[0][rank]  # تحويل المسافة إلى تشابه
-        cand_toks = token_sets[cand_idx] if cand_idx < len(token_sets) else tokens_from_text(questions[cand_idx])
-        tok_overlap = token_overlap_score(user_toks, cand_toks)
-
+        tok_overlap = token_overlap_score(user_toks, token_sets[cand_idx])
         combined = EMB_WEIGHT * emb_sim + TOKEN_WEIGHT * tok_overlap
-
         if combined > best_score:
             best_score = combined
             best_idx = cand_idx
-            best_emb_sim = emb_sim
-            best_tok_overlap = tok_overlap
 
-    # قرار إرجاع النتيجة أو لا
-    if best_idx is not None and (best_score >= COMBINED_THRESHOLD) and (best_emb_sim >= EMB_MIN_ACCEPT or best_tok_overlap >= TOKEN_MIN_ACCEPT):
-        # سجل السؤال والإجابة (توثيق) — نسجل التكرار أيضًا كما طلبتي
+    # لو النتيجة قوية بما يكفي
+    if best_idx is not None and best_score >= COMBINED_THRESHOLD:
         answer = answers[best_idx]
         save_or_update_qa(user_input, answer)
         return answer
 
-    # لو لم نجد نتيجة مطابقة كافية، حاول Scraping
+    # تجربة Web Scraping كمصدر بديل
     scraped = get_answer_from_url(user_input)
     if scraped:
         save_or_update_qa(user_input, scraped)
         return scraped
 
-    # أخيرًا: خزّن placeholder وأعلم المستخدم
+    # لو مفيش حاجة، نحفظ placeholder
     save_or_update_qa(user_input, "سيتم التعديل على الإجابة لاحقاً")
-    last_added_question = user_input
     return "لم أجد إجابة مناسبة حالياً، يمكنك أن تخبرني بالرد الصحيح."
+# --------------------------------------------
+#  إدارة الذاكرة لكل مستخدم
+# --------------------------------------------
 
+user_memory = {}  # {session_id: [history_list]}
+
+def add_to_memory(session_id, message, reply):
+    """حفظ آخر تفاعلات المستخدم"""
+    if session_id not in user_memory:
+        user_memory[session_id] = []
+    user_memory[session_id].append({"q": message, "a": reply})
+    # نحافظ على آخر 5 فقط
+    if len(user_memory[session_id]) > 5:
+        user_memory[session_id] = user_memory[session_id][-5:]
+
+def get_memory_context(session_id):
+    """إرجاع آخر 3 أسئلة لتغذية الذكاء"""
+    if session_id not in user_memory:
+        return ""
+    history = user_memory[session_id][-3:]
+    context = ""
+    for h in history:
+        context += f"المستخدم: {h['q']}\nالبوت: {h['a']}\n"
+    return context
+
+# --------------------------------------------
+#  API: Endpoint الدردشة
+# --------------------------------------------
 
 @app.route("/chat", methods=["POST"])
 def chat():
+    """النقطة الأساسية للتخاطب مع البوت"""
     user_input = request.json.get("message", "")
+    session_id = request.json.get("session_id", "default")  # لو التطبيق فيه مستخدمين متعددين
+
     candidate_answer = get_best_answer(user_input)
 
-    # استخدمي Gemini لصياغة لطيفة إن احتجتي (اختياري)
+    # الحصول على ذاكرة المستخدم السابقة
+    context = get_memory_context(session_id)
+
+    # تحسين الرد مع أخذ السياق في الاعتبار
     try:
         model = genai.GenerativeModel("models/gemini-2.5-pro")
         prompt = (
-            f"السؤال: {user_input}\n"
-            f"المحتوى المتوفر: {candidate_answer}\n"
-            "أعد صياغة إجابة قصيرة وواضحة للمستخدم (سطر واحد)."
+            "سياق المحادثة السابقة:\n" + context +
+            f"\nالسؤال الحالي: {user_input}\n"
+            f"الإجابة المقترحة من قاعدة البيانات: {candidate_answer}\n"
+            "استخدم السياق السابق لفهم المقصود ورد بإجابة دقيقة ومترابطة، مختصرة وواضحة."
         )
         response = model.generate_content(prompt)
         final_reply = response.text.strip().split("\n")[0]
     except Exception:
-        # لو فشل الLLM نرجع الإجابة الأولية
         final_reply = candidate_answer
 
-    # خزّني الإجابة النهائية التي ظهرت للمستخدم (توثيق)
+    # حفظ التفاعل في الذاكرة والملف
     save_or_update_qa(user_input, final_reply)
+    add_to_memory(session_id, user_input, final_reply)
 
     return jsonify({"reply": final_reply})
 
 
+# --------------------------------------------
+#  تشغيل السيرفر
+# --------------------------------------------
 if __name__ == "__main__":
     app.run(port=5000, debug=True)
