@@ -8,6 +8,7 @@ from sklearn.neighbors import NearestNeighbors
 import google.generativeai as genai
 import json, os, re, requests
 from bs4 import BeautifulSoup
+from bidi.algorithm import get_display
 
 # --------------------------------------------
 # ⚙️ الإعدادات العامة
@@ -173,16 +174,16 @@ def extract_topic(question):
 # --------------------------------------------
 # 🔍 البحث الذكي مع دعم الترجمة
 # --------------------------------------------
+import time  # ← ضيفها فوق في بداية الملف
+
 def get_best_answer(user_input):
-    """
-    البحث عن أفضل إجابة مع دعم الكلمات المفتاحية والترجمة
-    """
     original_text = user_input
     answer = ""
 
     # ---------------------------
-    # 🔹 تحديد لغة المستخدم والترجمة
+    # 🔹 تحديد لغة المستخدم
     # ---------------------------
+    t1 = time.time()
     detected_lang = "Arabic"
     try:
         model = genai.GenerativeModel("models/gemini-2.5-pro")
@@ -193,7 +194,10 @@ def get_best_answer(user_input):
     except Exception as e:
         print("⚠️ فشل في تحديد اللغة:", e)
 
-    # ترجمة السؤال إلى العربية إذا لزم الأمر
+    # ---------------------------
+    # 🔹 ترجمة السؤال للعربية إذا لزم الأمر
+    # ---------------------------
+    t2 = time.time()
     translated_for_search = user_input
     if detected_lang.lower() != "arabic":
         try:
@@ -209,20 +213,17 @@ def get_best_answer(user_input):
                 "",
                 resp.text.strip(),
             ).strip()
-
         except Exception as e:
             print("⚠️ خطأ أثناء الترجمة:", e)
 
     # ---------------------------
     # 🔍 البحث الذكي بالكلمات المفتاحية
     # ---------------------------
+    t3 = time.time()
     if not questions:
         answer = "لم أجد إجابة مناسبة حالياً."
     else:
-        # استخراج الكلمات المفتاحية
         keywords = [w.strip("؟,.،") for w in translated_for_search.split() if len(w) > 3]
-        
-        # البحث باستخدام Embeddings
         q_vec = embedder.encode([translated_for_search])
         k = min(TOP_K, len(questions))
         dist, idxs = nn_model.kneighbors(q_vec, n_neighbors=k)
@@ -230,53 +231,46 @@ def get_best_answer(user_input):
         candidates = []
         for rank, idx in enumerate(idxs[0]):
             emb_sim = 1 - dist[0][rank]
-            # فحص تطابق الكلمات المفتاحية
-            keyword_match = False
-            for keyword in keywords:
-                if (keyword in questions[idx].lower() or 
-                    keyword in answers[idx].lower()):
-                    keyword_match = True
-                    break
-            
+            keyword_match = any(
+                keyword in questions[idx].lower() or keyword in answers[idx].lower()
+                for keyword in keywords
+            )
             if keyword_match and emb_sim >= COMBINED_THRESHOLD:
                 candidates.append((emb_sim, answers[idx]))
 
-        if candidates:
-            # اختيار أفضل إجابة بناءً على التشابه
-            candidates.sort(reverse=True)
-            answer = candidates[0][1]
-        else:
-            answer = "لم أجد إجابة مناسبة حالياً."
+        answer = candidates[0][1] if candidates else "لم أجد إجابة مناسبة حالياً."
 
     # ---------------------------
     # 🔹 ترجمة الإجابة إلى لغة المستخدم
     # ---------------------------
+    t4 = time.time()
     final_answer = answer
     if detected_lang.lower() != "arabic":
         try:
             model = genai.GenerativeModel("models/gemini-2.5-pro")
             prompt = (
-                 "Translate the following text to Arabic. "
-                 "Reply ONLY with the translated Arabic text, no explanations, no notes, no markdown:\n\n"
-                f"Translate the following Arabic text to {detected_lang}:\n\n{answer}"
+                f"Translate the following Arabic text to {detected_lang}. "
+                "Reply ONLY with the translated text, no explanations:\n\n"
+                f"{answer}"
             )
             resp = model.generate_content(prompt)
             clean_text = re.sub(
-            r"(?i)(here is the translation|of course|translation|sure|the answer is|Here is the English|:)",
-            "",
-            resp.text.strip()
+                r"(?i)(here is the translation|of course|translation|sure|the answer is|Here is the English|:)",
+                "",
+                resp.text.strip()
             ).strip()
             final_answer = clean_text
-
         except Exception as e:
             print("⚠️ خطأ أثناء ترجمة الإجابة:", e)
 
-    # حفظ السؤال والإجابة
+    # ---------------------------
+    # 💾 الحفظ في قاعدة البيانات
+    # ---------------------------
+    t5 = time.time()
     try:
         save_or_update_qa(translated_for_search, answer)
     except Exception as e:
         print("⚠️ فشل أثناء الحفظ:", e)
-
     return final_answer
 
 # --------------------------------------------
@@ -286,10 +280,26 @@ def get_best_answer(user_input):
 def chat():
     user_input = request.json.get("message", "")
     session_id = request.json.get("session_id", "default")
-
     reply = get_best_answer(user_input)
+    pretty_log_question_answer(user_input, reply)
     return jsonify({"reply": reply})
+def pretty_log_question_answer(user_input, reply):
+    """طباعة منسقة للسؤال والإجابة في التيرمينال"""
+    from bidi.algorithm import get_display
+    import datetime, sys
 
+    # تصحيح الاتجاه + تأكد من الترميز UTF-8
+    sys.stdout.reconfigure(encoding="utf-8")
+    q_disp = get_display(user_input)
+    a_disp = get_display(reply)
+    now = datetime.datetime.now().strftime("%H:%M:%S")
+
+    # الطباعة النهائية بنفس شكل Logات Flutter
+    print("\n" + "=" * 60)
+    print(f"🕒 [{now}]")
+    print(f"📩 [USER QUESTION]: {q_disp}")
+    print(f"🤖 [BOT ANSWER]: {a_disp}")
+    print("=" * 60 + "\n")
 # --------------------------------------------
 # 🚀 تشغيل الخادم
 # --------------------------------------------
