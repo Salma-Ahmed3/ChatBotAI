@@ -15,7 +15,7 @@ from bs4 import BeautifulSoup
 app = Flask(__name__)
 
 # مفتاح Gemini API
-genai.configure(api_key="AIzaSyBEeidGnK_uyf9ikJWW9elsAgDdz8t09oA")
+genai.configure(api_key="AIzaSyDyHN4DInZrAHrUHbObZchZGS21VEEKBoU")
 
 # مسار ملف قاعدة البيانات
 FAQ_PATH = os.path.join(os.path.dirname(__file__), "faq.json")
@@ -90,9 +90,24 @@ def build_index_from_memory():
 def initialize_memory():
     global questions, answers, token_sets
     data = load_faq_data()
-    questions[:] = [d["question"] for d in data]
-    answers[:] = [d["answer"] for d in data]
-    token_sets[:] = [tokens_from_text(q) for q in questions]
+    
+    # Reset lists
+    questions.clear()
+    answers.clear()
+    token_sets.clear()
+    
+    # Extract questions and answers from nested structure
+    for topic in data:
+        for qa in topic.get("questions", []):
+            question = qa.get("question", "")
+            answer_list = qa.get("answers", [])
+            
+            if question and answer_list:
+                questions.append(question)
+                # Join multiple answers with newline if there are multiple
+                answers.append("\n".join(answer_list))
+                token_sets.append(tokens_from_text(question))
+    
     if questions:
         build_index_from_memory()
         print(f"✅ تم تحميل {len(questions)} سؤال وبناء الفهرس بنجاح.")
@@ -108,46 +123,65 @@ def save_or_update_qa(question, answer):
     data = load_faq_data()
     q_tokens = tokens_from_text(question)
     found_idx = None
+    found_topic = None
 
-    for i, q in enumerate(questions):
-        if token_overlap_score(q_tokens, token_sets[i]) >= 0.6:
-            found_idx = i
+    # البحث عن سؤال مشابه
+    for topic in data:
+        for qa in topic.get("questions", []):
+            if token_overlap_score(q_tokens, tokens_from_text(qa["question"])) >= 0.6:
+                found_topic = topic
+                found_idx = data.index(topic)
+                break
+        if found_topic:
             break
 
-    if found_idx is not None:
-        old_q = questions[found_idx]
-        for item in data:
-            if item["question"].strip() == old_q.strip():
-                item["answer"] = answer
-                break
-        answers[found_idx] = answer
-    else:
-        data.append({"question": question, "answer": answer})
-        questions.append(question)
-        answers.append(answer)
-        token_sets.append(q_tokens)
+    # تحويل الإجابة إلى قائمة إذا كانت نصاً
+    answer_list = answer.split("\n") if isinstance(answer, str) else answer
 
+    if found_topic:
+        # تحديث السؤال الموجود
+        for qa in found_topic["questions"]:
+            if token_overlap_score(q_tokens, tokens_from_text(qa["question"])) >= 0.6:
+                qa["answers"] = answer_list
+                break
+    else:
+        # إنشاء موضوع جديد
+        new_topic = {
+            "topic": extract_topic(question),  # دالة مساعدة سنضيفها
+            "questions": [{
+                "question": question,
+                "answers": answer_list
+            }]
+        }
+        data.append(new_topic)
+
+    # تحديث الملف
     with open(FAQ_PATH, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-    build_index_from_memory()
+    # تحديث الذاكرة
+    initialize_memory()
+
+def extract_topic(question):
+    """استخراج الموضوع من السؤال"""
+    # إزالة كلمات الاستفهام الشائعة
+    topic = question.replace("ما هي", "").replace("ما هو", "").replace("؟", "").strip()
+    # أخذ أول 3 كلمات كموضوع
+    words = topic.split()[:3]
+    return " ".join(words)
 
 # --------------------------------------------
 # 🔍 البحث الذكي مع دعم الترجمة
 # --------------------------------------------
 def get_best_answer(user_input):
     """
-    البحث عن أفضل إجابة — مع ترجمة ذكية:
-    - يترجم السؤال إلى العربية للبحث.
-    - بعد إيجاد الإجابة بالعربية، يترجم الرد إلى نفس لغة المستخدم.
-    - يرجع فقط الترجمة بدون أي مقدمة أو شرح.
+    البحث عن أفضل إجابة مع دعم الكلمات المفتاحية والترجمة
     """
-    global last_added_question
     original_text = user_input
     answer = ""
 
     # ---------------------------
-    # 🔹 تحديد لغة المستخدم
+    # 🔹 تحديد لغة المستخدم والترجمة
     # ---------------------------
     detected_lang = "Arabic"
     try:
@@ -156,13 +190,10 @@ def get_best_answer(user_input):
             f"Detect the language of this text only. Reply with one word like: Arabic, English, French, etc.\n\n{user_input}"
         )
         detected_lang = resp.text.strip().capitalize()
-        print(f"🌍 اللغة المكتشفة: {detected_lang}")
     except Exception as e:
         print("⚠️ فشل في تحديد اللغة:", e)
 
-    # ---------------------------
-    # 🔹 ترجمة السؤال إلى العربية للبحث فقط
-    # ---------------------------
+    # ترجمة السؤال إلى العربية إذا لزم الأمر
     translated_for_search = user_input
     if detected_lang.lower() != "arabic":
         try:
@@ -178,64 +209,69 @@ def get_best_answer(user_input):
                 "",
                 resp.text.strip(),
             ).strip()
-            print(f"🌐 [ترجمة السؤال] {user_input} → {translated_for_search}")
+
         except Exception as e:
-            print("⚠️ خطأ أثناء ترجمة السؤال:", e)
+            print("⚠️ خطأ أثناء الترجمة:", e)
 
     # ---------------------------
-    # 🔍 البحث في قاعدة الأسئلة بالعربية
+    # 🔍 البحث الذكي بالكلمات المفتاحية
     # ---------------------------
-    user_toks = tokens_from_text(translated_for_search)
-
     if not questions:
-        answer = "لم أجد إجابة مناسبة حالياً، يمكنك تزويدي بالإجابة الصحيحة."
-        save_or_update_qa(translated_for_search, answer)
+        answer = "لم أجد إجابة مناسبة حالياً."
     else:
+        # استخراج الكلمات المفتاحية
+        keywords = [w.strip("؟,.،") for w in translated_for_search.split() if len(w) > 3]
+        
+        # البحث باستخدام Embeddings
         q_vec = embedder.encode([translated_for_search])
         k = min(TOP_K, len(questions))
         dist, idxs = nn_model.kneighbors(q_vec, n_neighbors=k)
 
-        best_idx, best_score = None, -1
-        for rank, cand_idx in enumerate(idxs[0]):
+        candidates = []
+        for rank, idx in enumerate(idxs[0]):
             emb_sim = 1 - dist[0][rank]
-            tok_overlap = token_overlap_score(user_toks, token_sets[cand_idx])
-            combined = EMB_WEIGHT * emb_sim + TOKEN_WEIGHT * tok_overlap
-            if combined > best_score:
-                best_score = combined
-                best_idx = cand_idx
+            # فحص تطابق الكلمات المفتاحية
+            keyword_match = False
+            for keyword in keywords:
+                if (keyword in questions[idx].lower() or 
+                    keyword in answers[idx].lower()):
+                    keyword_match = True
+                    break
+            
+            if keyword_match and emb_sim >= COMBINED_THRESHOLD:
+                candidates.append((emb_sim, answers[idx]))
 
-        if best_idx is not None and best_score >= COMBINED_THRESHOLD:
-            answer = answers[best_idx]
+        if candidates:
+            # اختيار أفضل إجابة بناءً على التشابه
+            candidates.sort(reverse=True)
+            answer = candidates[0][1]
         else:
-            answer = "لم أجد إجابة مناسبة حالياً، يمكنك تزويدي بالإجابة الصحيحة."
+            answer = "لم أجد إجابة مناسبة حالياً."
 
     # ---------------------------
-    # 🔹 ترجمة الإجابة إلى نفس لغة المستخدم
+    # 🔹 ترجمة الإجابة إلى لغة المستخدم
     # ---------------------------
     final_answer = answer
     if detected_lang.lower() != "arabic":
         try:
             model = genai.GenerativeModel("models/gemini-2.5-pro")
             prompt = (
-                f"Translate the following Arabic text to {detected_lang}. "
-                "Reply ONLY with the translated text itself, no explanations, no markdown, no intro phrases:\n\n"
-                f"{answer}"
+                 "Translate the following text to Arabic. "
+                 "Reply ONLY with the translated Arabic text, no explanations, no notes, no markdown:\n\n"
+                f"Translate the following Arabic text to {detected_lang}:\n\n{answer}"
             )
             resp = model.generate_content(prompt)
-            translated_answer = re.sub(
-                r"(?i)(here is the translation|translation|of course|sure|the answer is|:)",
-                "",
-                resp.text.strip(),
+            clean_text = re.sub(
+            r"(?i)(here is the translation|of course|translation|sure|the answer is|Here is the English|:)",
+            "",
+            resp.text.strip()
             ).strip()
-            if translated_answer:
-                print(f"🌐 [ترجمة الإجابة] {answer} → {translated_answer}")
-                final_answer = translated_answer
+            final_answer = clean_text
+
         except Exception as e:
             print("⚠️ خطأ أثناء ترجمة الإجابة:", e)
 
-    # ---------------------------
-    # 💾 نحفظ النسخة العربية فقط
-    # ---------------------------
+    # حفظ السؤال والإجابة
     try:
         save_or_update_qa(translated_for_search, answer)
     except Exception as e:
