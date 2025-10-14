@@ -16,7 +16,7 @@ from bidi.algorithm import get_display
 app = Flask(__name__)
 
 # مفتاح Gemini API
-genai.configure(api_key="AIzaSyDyHN4DInZrAHrUHbObZchZGS21VEEKBoU")
+genai.configure(api_key="AIzaSyBiVujRK7sBtyHN6ttxewS_2lMzvBEIk1A")
 
 # مسار ملف قاعدة البيانات
 FAQ_PATH = os.path.join(os.path.dirname(__file__), "faq.json")
@@ -215,6 +215,73 @@ def get_best_answer(user_input):
             ).strip()
         except Exception as e:
             print("⚠️ خطأ أثناء الترجمة:", e)
+
+    # ---------------------------
+    # 🏙️ التحقق من الأحياء والعناوين
+    # ---------------------------
+    data = load_faq_data()
+    normalized_q = normalize_ar(translated_for_search)
+
+    if "حي" in normalized_q or "احياء" in normalized_q or "العناوين" in normalized_q:
+        for topic in data:
+            if normalize_ar(topic.get("topic", "")) == "العناوين":
+                # الوصول للأسئلة داخل التوبيك
+                questions_list = topic.get("questions", [])
+                if not questions_list:
+                    break
+
+                # استخراج المدن من أول إجابة
+                cities = questions_list[0].get("answers", [])
+                city_text = " ".join(cities)
+                cities_cleaned = [
+                    c.strip().replace("،", "").replace(".", "")
+                    for c in city_text.split()
+                    if len(c.strip()) > 1
+                ]
+
+                # 🔹 نبحث عن أي مدينة موجودة في السؤال
+                for city in cities_cleaned:
+                    if normalize_ar(city) in normalized_q:
+                        # نلاقي التوبيك الخاص بالمدينة
+                        for sub_topic in data:
+                            if normalize_ar(sub_topic.get("topic", "")) == f"العناوين {normalize_ar(city)}":
+                                areas = []
+                                for q in sub_topic.get("questions", []):
+                                    for ans in q.get("answers", []):
+                                        areas.extend(ans.replace("،", ",").split(","))
+                                areas = [a.strip() for a in areas if a.strip()]
+
+                                # 🔹 نبحث عن الحي داخل السؤال
+                                for area in areas:
+                                    if normalize_ar(area) in normalized_q:
+                                        return f"نعم، حي {area} موجود ✅"
+
+                                # 🔹 لو الحي مش موجود في المدينة المطلوبة
+                                return (
+                                    f"الحي المطلوب غير موجود في {city} ❌\n"
+                                    f"هل ترغب أن أظهر لك الأحياء المتوفرة في {city}؟\n\n"
+                                    "اكتب اسم المدينة الآن وسأعرضها لك 👇"
+                                )
+
+                # 🔹 لو السؤال عن حي بدون ذكر مدينة
+                all_areas = []
+                for sub_topic in data:
+                    if normalize_ar(sub_topic.get("topic", "")).startswith("العناوين"):
+                        for q in sub_topic.get("questions", []):
+                            for ans in q.get("answers", []):
+                                all_areas.extend(ans.replace("،", ",").split(","))
+                all_areas = [a.strip() for a in all_areas if a.strip()]
+
+                for area in all_areas:
+                    if normalize_ar(area) in normalized_q:
+                        return f"نعم، حي {area} موجود ✅"
+
+                # 🔹 لو الحي غير موجود تمامًا
+                return (
+                    "الحي المطلوب غير موجود ❌\n"
+                    "من فضلك اختر المدينة لمعرفة الأحياء المتوفرة فيها 👇\n\n"
+                    "المدن المتاحة: الرياض، جدة، المدينة المنورة"
+                )
 
     # ---------------------------
     # 🔍 البحث الذكي بالكلمات المفتاحية
