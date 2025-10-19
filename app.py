@@ -2,35 +2,37 @@
 # 🤖 Chatbot AI — نظام أسئلة وأجوبة ذكي باستخدام Embeddings + الكلمات المفتاحية
 # ============================================
 
-from flask import Flask, request, jsonify
-from sentence_transformers import SentenceTransformer
-from sklearn.neighbors import NearestNeighbors
-import google.generativeai as genai
-import json, os, re, requests
-from bs4 import BeautifulSoup
-from bidi.algorithm import get_display
-
+# 🧩 استيراد المكتبات الأساسية المستخدمة في المشروع
+from flask import Flask, request, jsonify              # لإنشاء API باستخدام Flask
+from sentence_transformers import SentenceTransformer  # لتوليد Embeddings من النصوص
+from sklearn.neighbors import NearestNeighbors         # للبحث عن أقرب سؤال بناءً على التشابه
+import google.generativeai as genai                    # لاستخدام واجهة Gemini API (ذكاء اصطناعي من Google)
+import json, os, re, requests                          # مكتبات مساعدة للملفات والنصوص
+from bs4 import BeautifulSoup                          # لتحليل HTML (ممكن تستخدم لاحقًا)
+from bidi.algorithm import get_display                 # لتصحيح عرض النص العربي من اليمين لليسار
+from flask import send_from_directory                  # لإرسال ملفات ثابتة زي favicon.ico
+import time                                            # لقياس زمن التنفيذ
 # --------------------------------------------
 # ⚙️ الإعدادات العامة
 # --------------------------------------------
-app = Flask(__name__)
+app = Flask(__name__)  # 🧩 إنشاء تطبيق Flask أساسي
 
-# مفتاح Gemini API
+# تهيئة مفتاح Gemini API
 genai.configure(api_key="AIzaSyBiVujRK7sBtyHN6ttxewS_2lMzvBEIk1A")
 
-# مسار ملف قاعدة البيانات
+# تحديد مسار قاعدة بيانات الأسئلة والأجوبة
 FAQ_PATH = os.path.join(os.path.dirname(__file__), "faq.json")
 
-# نموذج Embeddings خفيف وسريع
+# تحميل نموذج Embeddings خفيف وسريع (يحوّل النصوص إلى تمثيل عددي)
 embedder = SentenceTransformer("all-MiniLM-L6-v2")
 
 # --------------------------------------------
 # ⚙️ الإعدادات القابلة للتخصيص
 # --------------------------------------------
-TOP_K = 5
-EMB_WEIGHT = 0.7
-TOKEN_WEIGHT = 0.3
-COMBINED_THRESHOLD = 0.60
+TOP_K = 5                   # عدد النتائج المراد جلبها من البحث
+EMB_WEIGHT = 0.7            # وزن تشابه الـ Embeddings
+TOKEN_WEIGHT = 0.3          # وزن تشابه الكلمات المفتاحية
+COMBINED_THRESHOLD = 0.60   # الحد الأدنى للتشابه لقبول النتيجة
 
 # --------------------------------------------
 # 🚫 الكلمات الشائعة (Stopwords)
@@ -43,8 +45,8 @@ ARABIC_STOPWORDS = {
 # --------------------------------------------
 # 🧠 متغيرات الذاكرة أثناء التشغيل
 # --------------------------------------------
-questions, answers, token_sets = [], [], []
-nn_model = NearestNeighbors(n_neighbors=1, metric="cosine")
+questions, answers, token_sets = [], [], []    # لتخزين الأسئلة، الإجابات، وكلمات كل سؤال
+nn_model = NearestNeighbors(n_neighbors=1, metric="cosine")  # نموذج البحث بالتشابه الكوني
 
 # --------------------------------------------
 # 🧹 دوال مساعدة
@@ -53,16 +55,19 @@ nn_model = NearestNeighbors(n_neighbors=1, metric="cosine")
 def remove_diacritics(text):
     return re.sub(r'[\u0610-\u061A\u064B-\u065F\u06D6-\u06ED]', '', text)
 
+#  توحيد شكل النص العربي (تصغير، إزالة رموز، إلخ)
 def normalize_ar(text):
     t = text.lower()
     t = remove_diacritics(t)
-    t = re.sub(r'[^\u0600-\u06FF\s]', ' ', t)
+    t = re.sub(r'[^\u0600-\u06FF\s]', ' ', t)  # الاحتفاظ فقط بالحروف العربية
     return re.sub(r'\s+', ' ', t).strip()
 
+# استخراج الكلمات (Tokens) بعد التنظيف واستبعاد الكلمات الشائعة
 def tokens_from_text(text):
     t = normalize_ar(text)
     return [w for w in t.split() if w and w not in ARABIC_STOPWORDS]
 
+# حساب درجة التشابه بناءً على الكلمات المشتركة
 def token_overlap_score(q_tokens, c_tokens):
     if not c_tokens:
         return 0.0
@@ -79,7 +84,7 @@ def load_faq_data():
             return json.load(f)
     except Exception:
         return []
-
+#  بناء فهرس Embeddings للبحث السريع
 def build_index_from_memory():
     global nn_model
     if not questions:
@@ -87,7 +92,7 @@ def build_index_from_memory():
     embeddings = embedder.encode(questions, show_progress_bar=False)
     nn_model = NearestNeighbors(n_neighbors=min(len(questions), TOP_K), metric="cosine")
     nn_model.fit(embeddings)
-
+#  تحميل الأسئلة والإجابات إلى الذاكرة وبناء الفهرس
 def initialize_memory():
     global questions, answers, token_sets
     data = load_faq_data()
@@ -118,7 +123,7 @@ def initialize_memory():
 initialize_memory()
 
 # --------------------------------------------
-# ✍️ حفظ أو تحديث سؤال/إجابة
+#  ✍️ حفظ أو تحديث سؤال/إجابة في قاعدة البيانات
 # --------------------------------------------
 def save_or_update_qa(question, answer):
     data = load_faq_data()
@@ -126,7 +131,7 @@ def save_or_update_qa(question, answer):
     found_idx = None
     found_topic = None
 
-    # البحث عن سؤال مشابه
+  # البحث عن سؤال مشابه لتحديثه بدل من إضافة جديد
     for topic in data:
         for qa in topic.get("questions", []):
             if token_overlap_score(q_tokens, tokens_from_text(qa["question"])) >= 0.6:
@@ -148,7 +153,7 @@ def save_or_update_qa(question, answer):
     else:
         # إنشاء موضوع جديد
         new_topic = {
-            "topic": extract_topic(question),  # دالة مساعدة سنضيفها
+            "topic": extract_topic(question), 
             "questions": [{
                 "question": question,
                 "answers": answer_list
@@ -174,7 +179,6 @@ def extract_topic(question):
 # --------------------------------------------
 # 🔍 البحث الذكي مع دعم الترجمة
 # --------------------------------------------
-import time  # ← ضيفها فوق في بداية الملف
 
 def get_best_answer(user_input):
     original_text = user_input
@@ -423,6 +427,10 @@ def pretty_log_question_answer(user_input, reply):
     print(f"📩 [USER QUESTION]: {q_disp}")
     print(f"🤖 [BOT ANSWER]: {a_disp}")
     print("=" * 60 + "\n")
+
+@app.route('/favicon.ico')
+def favicon():
+    return send_from_directory('static', 'favicon.ico')
 # --------------------------------------------
 # 🚀 تشغيل الخادم
 # --------------------------------------------
