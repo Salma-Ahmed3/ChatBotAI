@@ -181,18 +181,36 @@ def get_best_answer(user_input):
     answer = ""
 
     # ---------------------------
-    # 🔹 تحديد لغة المستخدم
+    # 🔹 تحديد اللغة + الرد على الترحيب بنفس اللغة
     # ---------------------------
     t1 = time.time()
-    detected_lang = "Arabic"
+    model = genai.GenerativeModel("models/gemini-2.5-pro")
     try:
-        model = genai.GenerativeModel("models/gemini-2.5-pro")
         resp = model.generate_content(
-            f"Detect the language of this text only. Reply with one word like: Arabic, English, French, etc.\n\n{user_input}"
+            f"""
+            You are a multilingual assistant.
+            Step 1️⃣: Detect the language of this text.
+            Step 2️⃣: If the text is only a greeting (like hello, hi, مرحبا, hola, bonjour, etc.), 
+            then reply in the same detected language with a warm greeting message followed by "How can I help you today?" in that language.
+            Step 3️⃣: Otherwise, just reply with the language name only (Arabic, English, French, etc.).
+            
+            User text:
+            {user_input}
+            """
         )
-        detected_lang = resp.text.strip().capitalize()
+
+        detected_text = resp.text.strip()
+
+        # ✅ إذا كانت النتيجة جملة ترحيب كاملة (وليس فقط اسم لغة)
+        if any(word in detected_text.lower() for word in ["help", "مساعدتك", "aider", "ayudar", "aiutare"]):
+            return detected_text  # الرد الترحيبي الجاهز من Gemini
+
+        # ✅ وإلا فهي مجرد اسم لغة (زي "Arabic", "English" ...)
+        detected_lang = detected_text.split()[0].capitalize()
+
     except Exception as e:
-        print("⚠️ فشل في تحديد اللغة:", e)
+        print("⚠️ فشل في تحديد اللغة أو الرد الترحيبي:", e)
+        detected_lang = "Arabic"
 
     # ---------------------------
     # 🔹 ترجمة السؤال للعربية إذا لزم الأمر
@@ -339,6 +357,44 @@ def get_best_answer(user_input):
     except Exception as e:
         print("⚠️ فشل أثناء الحفظ:", e)
     return final_answer
+# --------------------------------------------
+# 📤 رفع قاعدة الأسئلة والأجوبة لبوستمان (upload_faq)
+# --------------------------------------------
+FAQ_PATH = "faq_data.json"
+
+def initialize_memory():
+    # هنا تقدرِ تحطي الكود اللي بيبني الفهرس أو الذاكرة
+    print("✅ تم بناء الفهرس بنجاح.")
+
+@app.route("/upload_faq", methods=["GET", "POST"])
+def upload_faq():
+    # ✅ لو المستخدم فتح الرابط في المتصفح (GET)
+    if request.method == "GET":
+        if os.path.exists(FAQ_PATH):
+            with open(FAQ_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            # نرجع JSON بشكل منسق
+            return jsonify(data)
+        else:
+            return jsonify({"message": "❌ لا يوجد بيانات بعد."}), 404
+
+    # ✅ لو المستخدم رفع بيانات (POST)
+    try:
+        data = request.json
+        if not data:
+            return jsonify({"error": "لم يتم إرسال أي بيانات."}), 400
+        if not isinstance(data, list):
+            return jsonify({"error": "البيانات يجب أن تكون قائمة (list) من العناصر."}), 400
+
+        with open(FAQ_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+        initialize_memory()
+        return jsonify({"message": f"✅ تم رفع وحفظ {len(data)} موضوع بنجاح."}), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 
 # --------------------------------------------
 # 💬 واجهة الدردشة (API)
