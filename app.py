@@ -176,6 +176,42 @@ def extract_topic(question):
     words = topic.split()[:3]
     return " ".join(words)
 
+def filter_answers_by_query(user_text, data, min_token_len=3):
+    """
+    فلترة عامة: إذا سألت عن شيء محدد، نعيد فقط الإجابات التي تحتوي على كلمات
+    المفتاح من السؤال (بدون إضافة إجابات غير متعلقة).
+    الرد بنفس اللغة المرسله
+    - user_text: النص الأصلي أو المترجم للبحث.
+    - data: قائمة الـ FAQ.
+    """
+    tokens = [t for t in tokens_from_text(user_text) if len(t) >= min_token_len]
+    if not tokens:
+        return None
+
+    matches = []
+    for topic in data:
+        for qa in topic.get("questions", []):
+            # نبحث داخل كل إجابة ونضيفها إذا وُجد أي توكن
+            for ans in qa.get("answers", []):
+                norm_ans = normalize_ar(ans)
+                for tok in tokens:
+                    if tok in norm_ans:
+                        matches.append(ans)
+                        break
+
+            # كمان نبحث داخل نص السؤال المخزن (في حال الإجابة قصيرة وغير مفصّلة)
+            norm_q = normalize_ar(qa.get("question", ""))
+            for tok in tokens:
+                if tok in norm_q:
+                    # نضيف كل إجابات هذا السؤال
+                    matches.extend(qa.get("answers", []))
+                    break
+
+    if matches:
+        # إرجاع إجابات فريدة مرتبة كما وُجدت
+        return "\n".join(dict.fromkeys(matches))
+    return None
+
 # --------------------------------------------
 # 🔍 البحث الذكي مع دعم الترجمة
 # --------------------------------------------
@@ -243,6 +279,31 @@ def get_best_answer(user_input):
     # ---------------------------
     data = load_faq_data()
     normalized_q = normalize_ar(translated_for_search)
+
+    # ---------------------------
+    # ✅ فلترة عامة: لو السؤال يذكر شيء محدد، أعد فقط الإجابات التي تحتوي على نفس الكلمة/المفهوم
+    # ---------------------------
+    filtered_answers = filter_answers_by_query(translated_for_search, data)
+    if filtered_answers:
+        if detected_lang.lower() != "arabic":
+            try:
+                model = genai.GenerativeModel("models/gemini-2.5-pro")
+                prompt = (
+                    f"Translate the following Arabic text to {detected_lang}. "
+                    "Reply ONLY with the translated text, no explanations:\n\n"
+                    f"{filtered_answers}"
+                )
+                resp = model.generate_content(prompt)
+                clean_text = re.sub(
+                    r"(?i)(here is the translation|of course|translation|sure|the answer is|Here is the English|:)",
+                    "",
+                    resp.text.strip()
+                ).strip()
+                return clean_text
+            except Exception as e:
+                print("⚠️ خطأ أثناء ترجمة الإجابات المفلترة:", e)
+                return filtered_answers
+        return filtered_answers
 
     if "حي" in normalized_q or "احياء" in normalized_q or "العناوين" in normalized_q:
         for topic in data:
