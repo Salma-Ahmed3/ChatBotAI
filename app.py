@@ -18,7 +18,7 @@ import time                                            # لقياس زمن ال�
 app = Flask(__name__)  # 🧩 إنشاء تطبيق Flask أساسي
 
 # تهيئة مفتاح Gemini API
-genai.configure(api_key="AIzaSyBiVujRK7sBtyHN6ttxewS_2lMzvBEIk1A")
+genai.configure(api_key="AIzaSyAD-40V_F3guIm58f8veagdoBwyN-b1M5I")
 
 # تحديد مسار قاعدة بيانات الأسئلة والأجوبة
 FAQ_PATH = os.path.join(os.path.dirname(__file__), "faq.json")
@@ -41,6 +41,31 @@ ARABIC_STOPWORDS = {
     "في", "من", "ما", "هي", "ماهي", "ما هي", "لم", "عن", "على", "و", "او", "أو",
     "هل", "كيف", "أين", "كم", "هذا", "هذه", "ذلك", "تكون", "يكون", "هو", "هي", "إلى", "ب"
 }
+
+def check_text_safety(text):
+    """التحقق من سلامة النص باستخدام Gemini"""
+    try:
+        model = genai.GenerativeModel("models/gemini-2.5-pro")
+        prompt = f"""
+        Analyze if this text contains any offensive content like:
+        - Insults
+        - Hate speech
+        - Profanity
+        - Threats
+        - Inappropriate language
+        
+        Reply ONLY with "SAFE" or "UNSAFE". Nothing else.
+        
+        Text to analyze:
+        {text}
+        """
+        
+        resp = model.generate_content(prompt)
+        result = resp.text.strip().upper()
+        return result == "SAFE"
+    except Exception as e:
+        print("⚠️ خطأ في فحص سلامة النص:", e)
+        return True  # نعتبر النص آمن في حالة حدوث خطأ
 
 # --------------------------------------------
 # 🧠 متغيرات الذاكرة أثناء التشغيل
@@ -176,40 +201,44 @@ def extract_topic(question):
     words = topic.split()[:3]
     return " ".join(words)
 
-def filter_answers_by_query(user_text, data, min_token_len=3):
+def filter_answers_by_query(user_text, data, min_token_len=4):  # زيادة الحد الأدنى لطول الكلمات
     """
-    فلترة عامة: إذا سألت عن شيء محدد، نعيد فقط الإجابات التي تحتوي على كلمات
-    المفتاح من السؤال (بدون إضافة إجابات غير متعلقة).
-    الرد بنفس اللغة المرسله
-    - user_text: النص الأصلي أو المترجم للبحث.
-    - data: قائمة الـ FAQ.
+    فلترة عامة: إذا سألت عن شيء محدد، نعيد فقط الإجابات المتعلقة
     """
     tokens = [t for t in tokens_from_text(user_text) if len(t) >= min_token_len]
     if not tokens:
         return None
 
     matches = []
+    required_matches = max(1, len(tokens))  # يجب تطابق نصف الكلمات على الأقل
+    
     for topic in data:
         for qa in topic.get("questions", []):
-            # نبحث داخل كل إجابة ونضيفها إذا وُجد أي توكن
             for ans in qa.get("answers", []):
                 norm_ans = normalize_ar(ans)
+                matched_tokens = 0
+                
                 for tok in tokens:
                     if tok in norm_ans:
-                        matches.append(ans)
-                        break
+                        matched_tokens += 1
+                        if matched_tokens >= required_matches:
+                            matches.append(ans)
+                            break
 
-            # كمان نبحث داخل نص السؤال المخزن (في حال الإجابة قصيرة وغير مفصّلة)
-            norm_q = normalize_ar(qa.get("question", ""))
-            for tok in tokens:
-                if tok in norm_q:
-                    # نضيف كل إجابات هذا السؤال
-                    matches.extend(qa.get("answers", []))
-                    break
+            # البحث في السؤال نفسه
+            if matched_tokens < required_matches:
+                norm_q = normalize_ar(qa.get("question", ""))
+                for tok in tokens:
+                    if tok in norm_q:
+                        matched_tokens += 1
+                        if matched_tokens >= required_matches:
+                            matches.extend(qa.get("answers", []))
+                            break
 
     if matches:
-        # إرجاع إجابات فريدة مرتبة كما وُجدت
-        return "\n".join(dict.fromkeys(matches))
+        # إرجاع إجابات فريدة مع حد أقصى 2 إجابات
+        unique_answers = list(dict.fromkeys(matches))[:2]
+        return "\n".join(unique_answers)
     return None
 
 # --------------------------------------------
@@ -217,6 +246,17 @@ def filter_answers_by_query(user_text, data, min_token_len=3):
 # --------------------------------------------
 
 def get_best_answer(user_input):
+    # فحص سلامة النص أولاً
+    if not check_text_safety(user_input):
+        responses = {
+            "ar": "عذراً، هذا أسلوب غير لائق. نرجو التحدث باحترام. شكراً لتفهمك 🚫",
+            "en": "Sorry, this language is inappropriate. Please communicate respectfully. Thank you for understanding 🚫",
+            "fr": "Désolé, ce langage est inapproprié. Veuillez communiquer respectueusement. Merci de votre compréhension 🚫",
+            "es": "Lo siento, este lenguaje es inapropiado. Por favor, comuníquese respetuosamente. Gracias por su comprensión 🚫"
+        }
+        # سنستخدم الرد العربي كافتراضي
+        return responses["ar"]
+    
     original_text = user_input
     answer = ""
 
@@ -228,6 +268,7 @@ def get_best_answer(user_input):
     try:
         resp = model.generate_content(
             f"""
+            If the sender asks you for help, reply that you are here to help him.
             You are a multilingual assistant.
             Step 1️⃣: Detect the language of this text.
             Step 2️⃣: If the text is only a greeting (like hello, hi, مرحبا, hola, bonjour, etc.), 
@@ -371,7 +412,7 @@ def get_best_answer(user_input):
     # ---------------------------
     t3 = time.time()
     if not questions:
-        answer = "لم أجد إجابة مناسبة حالياً."
+        answer = "لم أجد إجابة مناسبة حالياً. هل يمكنك توضيح سؤالك أكثر؟ او اذا اردت يمكنك التواصل مع خدمة العملاء لحل المشكلة ومراجعة سؤالك"
     else:
         keywords = [w.strip("؟,.،") for w in translated_for_search.split() if len(w) > 3]
         q_vec = embedder.encode([translated_for_search])
@@ -388,7 +429,8 @@ def get_best_answer(user_input):
             if keyword_match and emb_sim >= COMBINED_THRESHOLD:
                 candidates.append((emb_sim, answers[idx]))
 
-        answer = candidates[0][1] if candidates else "لم أجد إجابة مناسبة حالياً."
+        answer = candidates[0][1] if candidates else "لم أجد إجابة مناسبة حالياً. هل يمكنك توضيح سؤالك أكثر؟ او اذا اردت يمكنك التواصل مع خدمة العملاء لحل المشكلة ومراجعة سؤالك."
+
 
     # ---------------------------
     # 🔹 ترجمة الإجابة إلى لغة المستخدم
