@@ -1,0 +1,6 @@
+{
+    "default": {
+        "phase": "select_sector",
+        "sector": null
+    }
+}

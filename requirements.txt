@@ -1,0 +1,6 @@
+flask
+sentence-transformers
+scikit-learn
+google-generative-ai
+requests
+python-bidi
