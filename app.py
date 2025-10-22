@@ -1,46 +1,27 @@
-# ============================================
-# 🤖 Chatbot AI — نظام أسئلة وأجوبة ذكي باستخدام Embeddings + الكلمات المفتاحية
-# ============================================
+from flask import Flask, request, jsonify              
+from sentence_transformers import SentenceTransformer  
+from sklearn.neighbors import NearestNeighbors         
+import google.generativeai as genai                    
+import json, os, re, requests                         
+from bs4 import BeautifulSoup                          
+from bidi.algorithm import get_display                
+from flask import send_from_directory                 
+import time                                          
 
-# 🧩 استيراد المكتبات الأساسية المستخدمة في المشروع
-from flask import Flask, request, jsonify              # لإنشاء API باستخدام Flask
-from sentence_transformers import SentenceTransformer  # لتوليد Embeddings من النصوص
-from sklearn.neighbors import NearestNeighbors         # للبحث عن أقرب سؤال بناءً على التشابه
-import google.generativeai as genai                    # لاستخدام واجهة Gemini API (ذكاء اصطناعي من Google)
-import json, os, re, requests                          # مكتبات مساعدة للملفات والنصوص
-from bs4 import BeautifulSoup                          # لتحليل HTML (ممكن تستخدم لاحقًا)
-from bidi.algorithm import get_display                 # لتصحيح عرض النص العربي من اليمين لليسار
-from flask import send_from_directory                  # لإرسال ملفات ثابتة زي favicon.ico
-import time                                            # لقياس زمن التنفيذ
-# --------------------------------------------
-# ⚙️ الإعدادات العامة
-# --------------------------------------------
-app = Flask(__name__)  # 🧩 إنشاء تطبيق Flask أساسي
+app = Flask(__name__)  
 
-# تهيئة مفتاح Gemini API
+
 genai.configure(api_key="AIzaSyAD-40V_F3guIm58f8veagdoBwyN-b1M5I")
-
-# تحديد مسار قاعدة بيانات الأسئلة والأجوبة
 FAQ_PATH = os.path.join(os.path.dirname(__file__), "faq.json")
-
-# تحميل نموذج Embeddings خفيف وسريع (يحوّل النصوص إلى تمثيل عددي)
 embedder = SentenceTransformer("all-MiniLM-L6-v2")
+TOP_K = 5                
+EMB_WEIGHT = 0.7           
+TOKEN_WEIGHT = 0.3         
+COMBINED_THRESHOLD = 0.60  
 
-# --------------------------------------------
-# ⚙️ الإعدادات القابلة للتخصيص
-# --------------------------------------------
-TOP_K = 5                   # عدد النتائج المراد جلبها من البحث
-EMB_WEIGHT = 0.7            # وزن تشابه الـ Embeddings
-TOKEN_WEIGHT = 0.3          # وزن تشابه الكلمات المفتاحية
-COMBINED_THRESHOLD = 0.60   # الحد الأدنى للتشابه لقبول النتيجة
 
-# --------------------------------------------
-# 🚫 الكلمات الشائعة (Stopwords)
-# --------------------------------------------
-ARABIC_STOPWORDS = {
-    "في", "من", "ما", "هي", "ماهي", "ما هي", "لم", "عن", "على", "و", "او", "أو",
-    "هل", "كيف", "أين", "كم", "هذا", "هذه", "ذلك", "تكون", "يكون", "هو", "هي", "إلى", "ب"
-}
+from keyWords import SERVICSE_KEYWORDS, ARABIC_STOPWORDS
+
 
 def check_text_safety(text):
     """التحقق من سلامة النص باستخدام Gemini"""
@@ -65,42 +46,33 @@ def check_text_safety(text):
         return result == "SAFE"
     except Exception as e:
         print("⚠️ خطأ في فحص سلامة النص:", e)
-        return True  # نعتبر النص آمن في حالة حدوث خطأ
+        return True 
 
-# --------------------------------------------
-# 🧠 متغيرات الذاكرة أثناء التشغيل
-# --------------------------------------------
-questions, answers, token_sets = [], [], []    # لتخزين الأسئلة، الإجابات، وكلمات كل سؤال
-nn_model = NearestNeighbors(n_neighbors=1, metric="cosine")  # نموذج البحث بالتشابه الكوني
+questions, answers, token_sets = [], [], []   
+nn_model = NearestNeighbors(n_neighbors=1, metric="cosine") 
 
-# --------------------------------------------
-# 🧹 دوال مساعدة
-# --------------------------------------------
 
 def remove_diacritics(text):
     return re.sub(r'[\u0610-\u061A\u064B-\u065F\u06D6-\u06ED]', '', text)
 
-#  توحيد شكل النص العربي (تصغير، إزالة رموز، إلخ)
+
 def normalize_ar(text):
     t = text.lower()
     t = remove_diacritics(t)
-    t = re.sub(r'[^\u0600-\u06FF\s]', ' ', t)  # الاحتفاظ فقط بالحروف العربية
+    t = re.sub(r'[^\u0600-\u06FF\s]', ' ', t) 
     return re.sub(r'\s+', ' ', t).strip()
 
-# استخراج الكلمات (Tokens) بعد التنظيف واستبعاد الكلمات الشائعة
+
 def tokens_from_text(text):
     t = normalize_ar(text)
     return [w for w in t.split() if w and w not in ARABIC_STOPWORDS]
 
-# حساب درجة التشابه بناءً على الكلمات المشتركة
+
 def token_overlap_score(q_tokens, c_tokens):
     if not c_tokens:
         return 0.0
     return len(set(q_tokens) & set(c_tokens)) / max(len(c_tokens), 1)
 
-# --------------------------------------------
-# 💾 تحميل وتحديث قاعدة البيانات
-# --------------------------------------------
 def load_faq_data():
     if not os.path.exists(FAQ_PATH):
         return []
@@ -109,7 +81,7 @@ def load_faq_data():
             return json.load(f)
     except Exception:
         return []
-#  بناء فهرس Embeddings للبحث السريع
+
 def build_index_from_memory():
     global nn_model
     if not questions:
@@ -117,7 +89,7 @@ def build_index_from_memory():
     embeddings = embedder.encode(questions, show_progress_bar=False)
     nn_model = NearestNeighbors(n_neighbors=min(len(questions), TOP_K), metric="cosine")
     nn_model.fit(embeddings)
-#  تحميل الأسئلة والإجابات إلى الذاكرة وبناء الفهرس
+
 def initialize_memory():
     global questions, answers, token_sets
     data = load_faq_data()
@@ -127,7 +99,7 @@ def initialize_memory():
     answers.clear()
     token_sets.clear()
     
-    # Extract questions and answers from nested structure
+
     for topic in data:
         for qa in topic.get("questions", []):
             question = qa.get("question", "")
@@ -135,7 +107,7 @@ def initialize_memory():
             
             if question and answer_list:
                 questions.append(question)
-                # Join multiple answers with newline if there are multiple
+             
                 answers.append("\n".join(answer_list))
                 token_sets.append(tokens_from_text(question))
     
@@ -146,17 +118,13 @@ def initialize_memory():
         print("⚠️ لا توجد أسئلة محفوظة بعد.")
 
 initialize_memory()
-
-# --------------------------------------------
-#  ✍️ حفظ أو تحديث سؤال/إجابة في قاعدة البيانات
-# --------------------------------------------
 def save_or_update_qa(question, answer):
     data = load_faq_data()
     q_tokens = tokens_from_text(question)
     found_idx = None
     found_topic = None
 
-  # البحث عن سؤال مشابه لتحديثه بدل من إضافة جديد
+
     for topic in data:
         for qa in topic.get("questions", []):
             if token_overlap_score(q_tokens, tokens_from_text(qa["question"])) >= 0.6:
@@ -166,17 +134,17 @@ def save_or_update_qa(question, answer):
         if found_topic:
             break
 
-    # تحويل الإجابة إلى قائمة إذا كانت نصاً
+
     answer_list = answer.split("\n") if isinstance(answer, str) else answer
 
     if found_topic:
-        # تحديث السؤال الموجود
+
         for qa in found_topic["questions"]:
             if token_overlap_score(q_tokens, tokens_from_text(qa["question"])) >= 0.6:
                 qa["answers"] = answer_list
                 break
     else:
-        # إنشاء موضوع جديد
+
         new_topic = {
             "topic": extract_topic(question), 
             "questions": [{
@@ -186,22 +154,21 @@ def save_or_update_qa(question, answer):
         }
         data.append(new_topic)
 
-    # تحديث الملف
     with open(FAQ_PATH, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-    # تحديث الذاكرة
+
     initialize_memory()
 
 def extract_topic(question):
     """استخراج الموضوع من السؤال"""
-    # إزالة كلمات الاستفهام الشائعة
+
     topic = question.replace("ما هي", "").replace("ما هو", "").replace("؟", "").strip()
-    # أخذ أول 3 كلمات كموضوع
+
     words = topic.split()[:3]
     return " ".join(words)
 
-def filter_answers_by_query(user_text, data, min_token_len=4):  # زيادة الحد الأدنى لطول الكلمات
+def filter_answers_by_query(user_text, data, min_token_len=4): 
     """
     فلترة عامة: إذا سألت عن شيء محدد، نعيد فقط الإجابات المتعلقة
     """
@@ -210,7 +177,7 @@ def filter_answers_by_query(user_text, data, min_token_len=4):  # زيادة ا�
         return None
 
     matches = []
-    required_matches = max(1, len(tokens))  # يجب تطابق نصف الكلمات على الأقل
+    required_matches = max(1, len(tokens)) 
     
     for topic in data:
         for qa in topic.get("questions", []):
@@ -225,7 +192,7 @@ def filter_answers_by_query(user_text, data, min_token_len=4):  # زيادة ا�
                             matches.append(ans)
                             break
 
-            # البحث في السؤال نفسه
+      
             if matched_tokens < required_matches:
                 norm_q = normalize_ar(qa.get("question", ""))
                 for tok in tokens:
@@ -236,14 +203,56 @@ def filter_answers_by_query(user_text, data, min_token_len=4):  # زيادة ا�
                             break
 
     if matches:
-        # إرجاع إجابات فريدة مع حد أقصى 2 إجابات
+   
         unique_answers = list(dict.fromkeys(matches))[:2]
         return "\n".join(unique_answers)
     return None
+API_URL = "https://b2c.mueen.com.sa:8021/api/content/Search/ar/mobileServicesSection?withchildren=true"
 
-# --------------------------------------------
-# 🔍 البحث الذكي مع دعم الترجمة
-# --------------------------------------------
+from bidi.algorithm import get_display
+
+def fetch_services_from_api():
+    try:
+        print("🔍 جاري جلب الخدمات...")
+        resp = requests.get(API_URL, timeout=10)
+        print(f"حالة الاستجابة: {resp.status_code}")
+        
+        if resp.status_code != 200:
+            print(f"خطأ في الاستجابة: {resp.text}")
+            return "عذراً، حدث خطأ في جلب الخدمات. الرجاء المحاولة لاحقاً."
+        
+        data = resp.json()
+        
+        services = []
+        # Handle the specific response structure
+        for item in data:
+            if item.get("children"):
+                for child in item["children"]:
+                    fields = child.get("fields", {})
+                    title = fields.get("title", "").strip()
+                    subtitle = fields.get("subTitle", "").strip()
+                    
+                    if title:
+                        service_text = f"• {title}"
+                        if subtitle:
+                            service_text += f": {subtitle}"
+                        services.append(service_text)
+        
+        if services:
+            # Don't use get_display() here - let the client handle text direction
+            result = "الخدمات المتوفرة:\n" + "\n".join(services)
+            print("Final services list:", result)  # Debug print
+            return result
+        else:
+            return "لم يتم العثور على خدمات متاحة."
+            
+    except requests.RequestException as e:
+        print(f"⚠️ خطأ في الاتصال: {str(e)}")
+        return "عذراً، حدث خطأ في الاتصال بالخدمة. الرجاء التأكد من اتصالك بالإنترنت والمحاولة لاحقاً."
+    except Exception as e:
+        print(f"⚠️ خطأ غير متوقع: {str(e)}")
+        print("Response content:", resp.text)
+        return "حدث خطأ أثناء جلب الخدمات، يرجى المحاولة لاحقاً."
 
 def get_best_answer(user_input):
     # فحص سلامة النص أولاً
@@ -254,15 +263,20 @@ def get_best_answer(user_input):
             "fr": "Désolé, ce langage est inapproprié. Veuillez communiquer respectueusement. Merci de votre compréhension 🚫",
             "es": "Lo siento, este lenguaje es inapropiado. Por favor, comuníquese respetuosamente. Gracias por su comprensión 🚫"
         }
-        # سنستخدم الرد العربي كافتراضي
-        return responses["ar"]
     
+
+    normalized_q = normalize_ar(user_input)
+
+    # تحسين التحقق من الخدمات
+    service_related = any(word in normalized_q for word in SERVICSE_KEYWORDS)
+    if service_related:
+        print(f"🔍 تم اكتشاف سؤال عن الخدمات: {user_input}")
+        return fetch_services_from_api()
+
     original_text = user_input
     answer = ""
 
-    # ---------------------------
-    # 🔹 تحديد اللغة + الرد على الترحيب بنفس اللغة
-    # ---------------------------
+
     t1 = time.time()
     model = genai.GenerativeModel("models/gemini-2.5-pro")
     try:
@@ -282,20 +296,16 @@ def get_best_answer(user_input):
 
         detected_text = resp.text.strip()
 
-        # ✅ إذا كانت النتيجة جملة ترحيب كاملة (وليس فقط اسم لغة)
+ 
         if any(word in detected_text.lower() for word in ["help", "مساعدتك", "aider", "ayudar", "aiutare"]):
             return detected_text  # الرد الترحيبي الجاهز من Gemini
 
-        # ✅ وإلا فهي مجرد اسم لغة (زي "Arabic", "English" ...)
         detected_lang = detected_text.split()[0].capitalize()
 
     except Exception as e:
         print("⚠️ فشل في تحديد اللغة أو الرد الترحيبي:", e)
         detected_lang = "Arabic"
 
-    # ---------------------------
-    # 🔹 ترجمة السؤال للعربية إذا لزم الأمر
-    # ---------------------------
     t2 = time.time()
     translated_for_search = user_input
     if detected_lang.lower() != "arabic":
@@ -315,15 +325,10 @@ def get_best_answer(user_input):
         except Exception as e:
             print("⚠️ خطأ أثناء الترجمة:", e)
 
-    # ---------------------------
-    # 🏙️ التحقق من الأحياء والعناوين
-    # ---------------------------
+ 
     data = load_faq_data()
     normalized_q = normalize_ar(translated_for_search)
 
-    # ---------------------------
-    # ✅ فلترة عامة: لو السؤال يذكر شيء محدد، أعد فقط الإجابات التي تحتوي على نفس الكلمة/المفهوم
-    # ---------------------------
     filtered_answers = filter_answers_by_query(translated_for_search, data)
     if filtered_answers:
         if detected_lang.lower() != "arabic":
@@ -349,12 +354,12 @@ def get_best_answer(user_input):
     if "حي" in normalized_q or "احياء" in normalized_q or "العناوين" in normalized_q:
         for topic in data:
             if normalize_ar(topic.get("topic", "")) == "العناوين":
-                # الوصول للأسئلة داخل التوبيك
+  
                 questions_list = topic.get("questions", [])
                 if not questions_list:
                     break
 
-                # استخراج المدن من أول إجابة
+   
                 cities = questions_list[0].get("answers", [])
                 city_text = " ".join(cities)
                 cities_cleaned = [
@@ -363,10 +368,9 @@ def get_best_answer(user_input):
                     if len(c.strip()) > 1
                 ]
 
-                # 🔹 نبحث عن أي مدينة موجودة في السؤال
                 for city in cities_cleaned:
                     if normalize_ar(city) in normalized_q:
-                        # نلاقي التوبيك الخاص بالمدينة
+            
                         for sub_topic in data:
                             if normalize_ar(sub_topic.get("topic", "")) == f"العناوين {normalize_ar(city)}":
                                 areas = []
@@ -375,19 +379,19 @@ def get_best_answer(user_input):
                                         areas.extend(ans.replace("،", ",").split(","))
                                 areas = [a.strip() for a in areas if a.strip()]
 
-                                # 🔹 نبحث عن الحي داخل السؤال
+        
                                 for area in areas:
                                     if normalize_ar(area) in normalized_q:
                                         return f"نعم، حي {area} موجود ✅"
 
-                                # 🔹 لو الحي مش موجود في المدينة المطلوبة
+         
                                 return (
                                     f"الحي المطلوب غير موجود في {city} ❌\n"
                                     f"هل ترغب أن أظهر لك الأحياء المتوفرة في {city}؟\n\n"
                                     "اكتب اسم المدينة الآن وسأعرضها لك 👇"
                                 )
 
-                # 🔹 لو السؤال عن حي بدون ذكر مدينة
+
                 all_areas = []
                 for sub_topic in data:
                     if normalize_ar(sub_topic.get("topic", "")).startswith("العناوين"):
@@ -400,16 +404,12 @@ def get_best_answer(user_input):
                     if normalize_ar(area) in normalized_q:
                         return f"نعم، حي {area} موجود ✅"
 
-                # 🔹 لو الحي غير موجود تمامًا
                 return (
                     "الحي المطلوب غير موجود ❌\n"
                     "من فضلك اختر المدينة لمعرفة الأحياء المتوفرة فيها 👇\n\n"
                     "المدن المتاحة: الرياض، جدة، المدينة المنورة"
                 )
 
-    # ---------------------------
-    # 🔍 البحث الذكي بالكلمات المفتاحية
-    # ---------------------------
     t3 = time.time()
     if not questions:
         answer = "لم أجد إجابة مناسبة حالياً. هل يمكنك توضيح سؤالك أكثر؟ او اذا اردت يمكنك التواصل مع خدمة العملاء لحل المشكلة ومراجعة سؤالك"
@@ -432,9 +432,7 @@ def get_best_answer(user_input):
         answer = candidates[0][1] if candidates else "لم أجد إجابة مناسبة حالياً. هل يمكنك توضيح سؤالك أكثر؟ او اذا اردت يمكنك التواصل مع خدمة العملاء لحل المشكلة ومراجعة سؤالك."
 
 
-    # ---------------------------
-    # 🔹 ترجمة الإجابة إلى لغة المستخدم
-    # ---------------------------
+
     t4 = time.time()
     final_answer = answer
     if detected_lang.lower() != "arabic":
@@ -455,27 +453,23 @@ def get_best_answer(user_input):
         except Exception as e:
             print("⚠️ خطأ أثناء ترجمة الإجابة:", e)
 
-    # ---------------------------
-    # 💾 الحفظ في قاعدة البيانات
-    # ---------------------------
+
     t5 = time.time()
     try:
         save_or_update_qa(translated_for_search, answer)
     except Exception as e:
         print("⚠️ فشل أثناء الحفظ:", e)
     return final_answer
-# --------------------------------------------
-# 📤 رفع قاعدة الأسئلة والأجوبة لبوستمان (upload_faq)
-# --------------------------------------------
+
 FAQ_PATH = "faq_data.json"
 
 def initialize_memory():
-    # هنا تقدرِ تحطي الكود اللي بيبني الفهرس أو الذاكرة
+
     print("✅ تم بناء الفهرس بنجاح.")
 
 @app.route("/upload_faq", methods=["GET", "POST"])
 def upload_faq():
-    # ✅ لو المستخدم فتح الرابط في المتصفح (GET)
+
     if request.method == "GET":
         if os.path.exists(FAQ_PATH):
             with open(FAQ_PATH, "r", encoding="utf-8") as f:
@@ -485,7 +479,7 @@ def upload_faq():
         else:
             return jsonify({"message": "❌ لا يوجد بيانات بعد."}), 404
 
-    # ✅ لو المستخدم رفع بيانات (POST)
+
     try:
         data = request.json
         if not data:
@@ -502,10 +496,6 @@ def upload_faq():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-
-# --------------------------------------------
-# 💬 واجهة الدردشة (API)
-# --------------------------------------------
 @app.route("/chat", methods=["POST"])
 def chat():
     user_input = request.json.get("message", "")
@@ -518,13 +508,13 @@ def pretty_log_question_answer(user_input, reply):
     from bidi.algorithm import get_display
     import datetime, sys
 
-    # تصحيح الاتجاه + تأكد من الترميز UTF-8
+
     sys.stdout.reconfigure(encoding="utf-8")
     q_disp = get_display(user_input)
     a_disp = get_display(reply)
     now = datetime.datetime.now().strftime("%H:%M:%S")
 
-    # الطباعة النهائية بنفس شكل Logات Flutter
+
     print("\n" + "=" * 60)
     print(f"🕒 [{now}]")
     print(f"📩 [USER QUESTION]: {q_disp}")
