@@ -11,6 +11,8 @@ from .state import QUESTIONS, ANSWERS, TOKEN_SETS, NN_MODEL, EMBEDDER, TOP_K, CO
 from .save_or_update_qa import save_or_update_qa
 from keyWords import SERVICSE_KEYWORDS
 from services.load_faq_data import load_faq_data
+from .fetch_services_from_api import is_other_option
+
 
 
 def get_best_answer(user_input):
@@ -32,9 +34,23 @@ def get_best_answer(user_input):
     # If the user input is just a number (Arabic-Indic or Western numerals), treat it as a selection
     trans = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
     normalized_digits = normalized_q.translate(trans).strip()
+
     if re.fullmatch(r"\d+", normalized_digits):
         print(f"🔢 تم اكتشاف اختيار رقمي للخدمة: {user_input}")
-        return fetch_service_by_number(normalized_digits)
+        num = int(normalized_digits)
+
+        # تحديد القطاع الحالي (آخر قطاع المستخدم اختاره)
+        # نجيبه من SERVICES_MAP لو مخزّن
+        from .fetch_services_from_api import SERVICES_MAP
+        info = SERVICES_MAP.get("last_option_for_sector")
+        current_sector = info["sector_number"] if info else None
+
+        # تحقق لو اختار "أخرى"
+        if current_sector and is_other_option(current_sector, num):
+            return "من فضلك أدخل اسمك ورقم هاتفك وعنوانك والحي ليتم حفظ بياناتك."
+
+        # Otherwise return the service details for the chosen number
+        return fetch_service_by_number(num)
 
     original_text = user_input
     answer = ""

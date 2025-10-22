@@ -89,40 +89,58 @@ def fetch_service_by_number(number):
 
             #  إضافة خيار "أخرى" بعد آخر خدمة
             sub_services.append(f"{len(data) + 1}. أخرى")
+   
+
+            # حفظ رقم آخر خدمة (عشان نعرف ان المستخدم اختار اخرى)
+            SERVICES_MAP["last_option_for_sector"] = {
+            "sector_number": idx,
+            "last_option_number": len(data) + 1
+            }
 
             result = (
-                f"الخدمات المتوفرة في قطاع ({idx}) - {title} هي:\n\n"
-                + "\n".join(sub_services)
-                + "\n\nمن فضلك اختر رقم الخدمة للحصول على المزيد من التفاصيل."
-            )
+            f"الخدمات المتوفرة في قطاع ({idx}) - {title} هي:\n\n"
+            + "\n".join(sub_services)
+            + "\n\nمن فضلك اختر رقم الخدمة للحصول على المزيد من التفاصيل."
+        )
             return result
-
         #  لو الرقم 2 → نستخدم PROFESSIONGROUP_API (افراد)
-        elif idx == 2:
-            print(f"📡 جلب بيانات القطاع 2 من {PROFESSIONGROUP_API}")
-            resp = requests.get(PROFESSIONGROUP_API, timeout=10)
+        
+        if idx == 2:
+            url = PROFESSIONGROUP_API.format(idx)
+            print(f"📡 جلب بيانات القطاع 2 من {url}")
+            resp = requests.get(url, timeout=10)
 
             if resp.status_code != 200:
-                return "⚠️ حدث خطأ أثناء جلب بيانات المهن."
+                return "⚠️ حدث خطأ أثناء جلب خدمات هذا القطاع."
 
             data = resp.json().get("data", [])
             if not data:
-                return f"❌ لا توجد بيانات مهنية متاحة حالياً."
+                return f"❌ لا توجد خدمات متاحة في القطاع ({idx})."
 
             sub_services = []
             for i, item in enumerate(data, 1):
-                name = item.get("value", "مهنة غير معروفة").strip()
+                name = item.get("value", "خدمة بدون اسم").strip()
                 desc = item.get("description", "لا يوجد وصف").strip()
                 sub_services.append(f"{i}. {name} : {desc}")
+
             #  إضافة خيار "أخرى" بعد آخر خدمة
             sub_services.append(f"{len(data) + 1}. أخرى")
+   
+
+            # حفظ رقم آخر خدمة (عشان نعرف ان المستخدم اختار اخرى)
+            SERVICES_MAP["last_option_for_sector"] = {
+            "sector_number": idx,
+            "last_option_number": len(data) + 1
+            }
 
             result = (
-                f"الوظائف أو المهن المتوفرة في قطاع ({idx}) - {title}:\n\n"
-                + "\n".join(sub_services)
-                + "\n\nمن فضلك اختر رقم المهنة للحصول على المزيد من التفاصيل."
-            )
+            f"الخدمات المتوفرة في قطاع ({idx}) - {title} هي:\n\n"
+            + "\n".join(sub_services)
+            + "\n\nمن فضلك اختر رقم الخدمة للحصول على المزيد من التفاصيل."
+        )
             return result
+
+
         #  لو الرقم 3(صيانه)
         elif idx == 3:
             return "🔧 سوف يتم توفير خدمة الصيانة قريباً."
@@ -136,3 +154,12 @@ def fetch_service_by_number(number):
     except Exception as e:
         print(f"⚠️ خطأ أثناء جلب تفاصيل القطاع: {e}")
         return "حدث خطأ أثناء جلب تفاصيل القطاع. حاول مرة أخرى لاحقاً."
+def is_other_option(sector_number, chosen_number):
+    """يتأكد إن المستخدم اختار (أخرى) الخاصة بالقطاع"""
+    info = SERVICES_MAP.get("last_option_for_sector")
+    if not info:
+        return False
+    return (
+        info["sector_number"] == sector_number
+        and info["last_option_number"] == chosen_number
+    )

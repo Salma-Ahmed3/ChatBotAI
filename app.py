@@ -1,14 +1,13 @@
 from flask import Flask, request, jsonify, send_from_directory
 import json, os
 import google.generativeai as genai
-from sentence_transformers import SentenceTransformer                    
-
 from services.initialize_memory import initialize_memory
 from services.get_best_answer import get_best_answer
 from services.pretty_log_question_answer import pretty_log_question_answer
 from services.state import FAQ_PATH
-genai.configure(api_key="AIzaSyCxEtkGCtnFJkiBy7l7gT1fQnugOeUu6v4")
-embedder = SentenceTransformer("all-MiniLM-L6-v2")
+genai.configure(api_key="AIzaSyBEeidGnK_uyf9ikJWW9elsAgDdz8t09oA")
+# Initialize in-memory index from FAQ file (loads embedder and builds NN index)
+initialize_memory()
 
 app = Flask(__name__)
 
