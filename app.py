@@ -3,25 +3,21 @@ from sentence_transformers import SentenceTransformer
 from sklearn.neighbors import NearestNeighbors         
 import google.generativeai as genai                    
 import json, os, re, requests                         
-from bs4 import BeautifulSoup                          
-from bidi.algorithm import get_display                
 from flask import send_from_directory                 
 import time                                          
+from keyWords import SERVICSE_KEYWORDS, ARABIC_STOPWORDS
 
 app = Flask(__name__)  
 
 
-genai.configure(api_key="AIzaSyAD-40V_F3guIm58f8veagdoBwyN-b1M5I")
-FAQ_PATH = os.path.join(os.path.dirname(__file__), "faq.json")
+genai.configure(api_key="AIzaSyBiVujRK7sBtyHN6ttxewS_2lMzvBEIk1A")
 embedder = SentenceTransformer("all-MiniLM-L6-v2")
+
+FAQ_PATH = os.path.join(os.path.dirname(__file__), "faq.json")
 TOP_K = 5                
 EMB_WEIGHT = 0.7           
 TOKEN_WEIGHT = 0.3         
 COMBINED_THRESHOLD = 0.60  
-
-
-from keyWords import SERVICSE_KEYWORDS, ARABIC_STOPWORDS
-
 
 def check_text_safety(text):
     """التحقق من سلامة النص باستخدام Gemini"""
@@ -207,14 +203,13 @@ def filter_answers_by_query(user_text, data, min_token_len=4):
         unique_answers = list(dict.fromkeys(matches))[:2]
         return "\n".join(unique_answers)
     return None
-API_URL = "https://b2c.mueen.com.sa:8021/api/content/Search/ar/mobileServicesSection?withchildren=true"
 
-from bidi.algorithm import get_display
 
+SERVICE_API = "https://b2c.mueen.com.sa:8021/api/content/Search/ar/mobileServicesSection?withchildren=true"
 def fetch_services_from_api():
     try:
         print("🔍 جاري جلب الخدمات...")
-        resp = requests.get(API_URL, timeout=10)
+        resp = requests.get(SERVICE_API, timeout=10)
         print(f"حالة الاستجابة: {resp.status_code}")
         
         if resp.status_code != 200:
@@ -222,26 +217,22 @@ def fetch_services_from_api():
             return "عذراً، حدث خطأ في جلب الخدمات. الرجاء المحاولة لاحقاً."
         
         data = resp.json()
-        
         services = []
-        # Handle the specific response structure
+        counter = 1
+        
         for item in data:
             if item.get("children"):
                 for child in item["children"]:
                     fields = child.get("fields", {})
                     title = fields.get("title", "").strip()
-                    subtitle = fields.get("subTitle", "").strip()
                     
                     if title:
-                        service_text = f"• {title}"
-                        if subtitle:
-                            service_text += f": {subtitle}"
-                        services.append(service_text)
+                        services.append(f"{counter}. {title}")  # رقم لكل خدمة
+                        counter += 1
         
         if services:
-            # Don't use get_display() here - let the client handle text direction
-            result = "الخدمات المتوفرة:\n" + "\n".join(services)
-            print("Final services list:", result)  # Debug print
+            result = "لدينا العديد من الخدمات في قطاعات مختلفه , من فضلك قم باختيار رقم القطاع من اجل جلب الخدمات:\n" + "\n".join(services)
+            print("Final services list:", result)
             return result
         else:
             return "لم يتم العثور على خدمات متاحة."
@@ -251,9 +242,55 @@ def fetch_services_from_api():
         return "عذراً، حدث خطأ في الاتصال بالخدمة. الرجاء التأكد من اتصالك بالإنترنت والمحاولة لاحقاً."
     except Exception as e:
         print(f"⚠️ خطأ غير متوقع: {str(e)}")
-        print("Response content:", resp.text)
+        if 'resp' in locals():
+            print("Response content:", resp.text)
         return "حدث خطأ أثناء جلب الخدمات، يرجى المحاولة لاحقاً."
+def fetch_services_list():
+    """جلب قائمة العناوين فقط ومرقمة"""
+    try:
+        resp = requests.get(SERVICE_API, timeout=10)
+        if resp.status_code != 200:
+            return []
+        
+        data = resp.json()
+        services = []
+        
+        for item in data:
+            if item.get("children"):
+                for child in item["children"]:
+                    fields = child.get("fields", {})
+                    title = fields.get("title", "").strip()
+                    if title:
+                        services.append(title)
+        
+        return services
+    
+    except Exception as e:
+        print(f"خطأ أثناء جلب الخدمات: {str(e)}")
+        return []
 
+def get_service_by_number(number):
+    """إرجاع الخدمة بناءً على الرقم الذي اختاره المستخدم"""
+    services = fetch_services_list()
+    if not services:
+        return "لم يتم العثور على خدمات متاحة."
+    
+    if 1 <= number <= len(services):
+        return services[number - 1]  # لأن القوائم تبدأ من 0
+    else:
+        return "الرقم الذي اخترته غير صالح."
+
+# مثال استخدام:
+services = fetch_services_list()
+if services:
+    print("الخدمات المتوفرة:")
+    for idx, s in enumerate(services, 1):
+        print(f"{idx}. {s}")
+
+# لنفترض أن المستخدم اختار رقم 2
+choice = 2
+print("\nالخدمة المختارة:")
+print(get_service_by_number(choice))
 def get_best_answer(user_input):
     # فحص سلامة النص أولاً
     if not check_text_safety(user_input):
