@@ -5,7 +5,7 @@ from services.initialize_memory import initialize_memory
 from services.get_best_answer import get_best_answer
 from services.pretty_log_question_answer import pretty_log_question_answer
 from services.state import FAQ_PATH
-genai.configure(api_key="AIzaSyBEeidGnK_uyf9ikJWW9elsAgDdz8t09oA")
+genai.configure(api_key="AIzaSyDyHN4DInZrAHrUHbObZchZGS21VEEKBoU")
 # Initialize in-memory index from FAQ file (loads embedder and builds NN index)
 initialize_memory()
 

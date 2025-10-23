@@ -34,7 +34,17 @@ def get_best_answer(user_input):
     # If the user input is just a number (Arabic-Indic or Western numerals), treat it as a selection
     trans = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
     normalized_digits = normalized_q.translate(trans).strip()
+    # التعرف على اختيار رقمي أو بصيغة نقطية (مثل 1.2 أو ١.٢)
+    # نحول الأرقام العربية ثم نعوض الفاصل العربي "٫" إلى نقطة
+    normalized_digits = normalized_digits.replace("٫", ".").replace(",", ".").replace(" ", "")
 
+    #  حالة الاختيار بصيغة نقطية
+    if re.fullmatch(r"\d+\.\d+", normalized_digits):
+        print(f"🔢 تم اكتشاف اختيار رقمي بنقطة للخدمة: {user_input}")
+        # نمرر السلسلة كما هي لـ fetch_service_from_api (التي تدعمها الآن)
+        return fetch_service_by_number(normalized_digits)
+
+    #  حالة الاختيار برقم واحد فقط
     if re.fullmatch(r"\d+", normalized_digits):
         print(f"🔢 تم اكتشاف اختيار رقمي للخدمة: {user_input}")
         num = int(normalized_digits)
@@ -45,7 +55,7 @@ def get_best_answer(user_input):
         info = SERVICES_MAP.get("last_option_for_sector")
         current_sector = info["sector_number"] if info else None
 
-        # تحقق لو اختار "أخرى"
+        # تحقق لو اختار "أخرى" (يتوقع is_other_option الشكل القطاعي والنقطة)
         if current_sector and is_other_option(current_sector, num):
             return "من فضلك أدخل اسمك ورقم هاتفك وعنوانك والحي ليتم حفظ بياناتك."
 
