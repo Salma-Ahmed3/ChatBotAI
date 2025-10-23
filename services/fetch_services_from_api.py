@@ -3,7 +3,7 @@ from .state import FAQ_PATH
 
 SERVICE_API = "https://erp.rnr.sa:8016/api/content/Search/ar/mobileServicesSection?withchildren=true"
 SERVICES_DETAILS_API = "https://erp.rnr.sa:8005/ar/api/Service/ServicesForService?serviceType={}"
-PROFESSIONGROUP_API = "https://api.mueen.com.sa/ar/api/ProfessionGroups/AvailableProfessions"
+PROFESSIONGROUP_API = "https://erp.rnr.sa:8005/ar/api/ProfessionGroups/AvailableProfessions"
 
 SERVICES_MAP = {}
 
@@ -116,8 +116,8 @@ def fetch_service_by_number(number):
             if 1 <= sub_idx <= len(data):
                 item = data[sub_idx - 1]
                 # بعض الـAPIs تستخدم مفاتيح مختلفة
-                name = item.get("name") or item.get("value") or item.get("title") or "خدمة بدون اسم"
-                desc = item.get("description") or item.get("details") or "لا يوجد وصف"
+                name =  item.get("value") or "خدمة بدون اسم"
+                desc =  item.get("note") or "لا يوجد وصف"
                 return f"{name.strip()} : {desc.strip()}"
 
             return f"⚠️ الرقم {sector_idx}.{sub_idx} غير متوفر. الرجاء اختيار رقم من الأرقام المعروضة."
@@ -177,8 +177,8 @@ def fetch_service_by_number(number):
                 + "\n\nمن فضلك اختر رقم الخدمة للحصول على المزيد من التفاصيل."
             )
             return result
-
         #  لو الرقم 2 → نستخدم PROFESSIONGROUP_API (افراد)
+        
         if idx == 2:
             url = PROFESSIONGROUP_API.format(idx)
             print(f"📡 جلب بيانات القطاع 2 من {url}")
@@ -193,12 +193,10 @@ def fetch_service_by_number(number):
 
             sub_services = []
             for i, item in enumerate(data, 1):
-                name = item.get("value", "خدمة بدون اسم").strip()
-                desc = item.get("description", "لا يوجد وصف").strip()
-                # ترقيم فرعي بصيغة {قطاع}.{رقم}
-                sub_services.append(f"{idx}.{i}. {name} : {desc}")
-
-            #  إضافة خيار "أخرى" بعد آخر خدمة
+                name = item.get("value")
+                notes = item.get("notes")
+                
+                sub_services.append(f"{idx}.{i}. {name} : {notes}")
             sub_services.append(f"{idx}.{len(data) + 1}. أخرى")
 
             # حفظ بيانات الخدمات الفرعية داخل الـSERVICE_MAP
@@ -216,8 +214,7 @@ def fetch_service_by_number(number):
                 + "\n\nمن فضلك اختر رقم الخدمة للحصول على المزيد من التفاصيل."
             )
             return result
-
-
+    
         #  لو الرقم 3(صيانه)
         elif idx == 3:
             return "🔧 سوف يتم توفير خدمة الصيانة قريباً."
