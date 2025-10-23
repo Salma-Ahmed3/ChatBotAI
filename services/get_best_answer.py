@@ -41,6 +41,14 @@ def get_best_answer(user_input):
     #  حالة الاختيار بصيغة نقطية
     if re.fullmatch(r"\d+\.\d+", normalized_digits):
         print(f"🔢 تم اكتشاف اختيار رقمي بنقطة للخدمة: {user_input}")
+        # Only treat this as a service selection if we previously listed services
+        from .fetch_services_from_api import SERVICES_MAP
+        if not SERVICES_MAP:
+            return (
+                "هل تقصد اختيار خدمة؟ لعرض قائمة القطاعات اكتب 'خدمات' أو اسأل عن الخدمات أولاً، "
+                "ثم اختر رقم القطاع لكي أتمكن من مساعدتك"
+            )
+
         # نمرر السلسلة كما هي لـ fetch_service_from_api (التي تدعمها الآن)
         return fetch_service_by_number(normalized_digits)
 
@@ -52,6 +60,12 @@ def get_best_answer(user_input):
         # تحديد القطاع الحالي (آخر قطاع المستخدم اختاره)
         # نجيبه من SERVICES_MAP لو مخزّن
         from .fetch_services_from_api import SERVICES_MAP
+        # If we haven't shown services yet, asking a raw number shouldn't fetch data.
+        if not SERVICES_MAP:
+            return (
+                "هل تقصد اختيار خدمة من القائمة؟ لعرض القطاعات المتاحة اكتب 'خدمات' أولاً أو وضّح طلبك وسأنصحك بالخطوة التالية."
+            )
+
         info = SERVICES_MAP.get("last_option_for_sector")
         current_sector = info["sector_number"] if info else None
 

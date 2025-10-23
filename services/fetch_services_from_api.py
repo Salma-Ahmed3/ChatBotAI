@@ -116,8 +116,8 @@ def fetch_service_by_number(number):
             if 1 <= sub_idx <= len(data):
                 item = data[sub_idx - 1]
                 # بعض الـAPIs تستخدم مفاتيح مختلفة
-                name =  item.get("value") or "خدمة بدون اسم"
-                desc =  item.get("note") or "لا يوجد وصف"
+                name = item.get("name") or item.get("value") or item.get("title") or "خدمة بدون اسم"
+                desc = item.get("description") or item.get("notes") or "لا يوجد وصف"
                 return f"{name.strip()} : {desc.strip()}"
 
             return f"⚠️ الرقم {sector_idx}.{sub_idx} غير متوفر. الرجاء اختيار رقم من الأرقام المعروضة."

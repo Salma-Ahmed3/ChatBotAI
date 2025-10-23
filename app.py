@@ -4,7 +4,7 @@ import google.generativeai as genai
 from services.initialize_memory import initialize_memory
 from services.get_best_answer import get_best_answer
 from services.pretty_log_question_answer import pretty_log_question_answer
-from services.state import FAQ_PATH
+from services.state import FAQ_PATH, get_session_history, clear_session_history
 genai.configure(api_key="AIzaSyBFS6SFzJ9NPN-I7P0CoJ08dtHngoP-IRA")
 # Initialize in-memory index from FAQ file (loads embedder and builds NN index)
 initialize_memory()
@@ -56,6 +56,26 @@ def chat():
 @app.route('/favicon.ico')
 def favicon():
     return send_from_directory('static', 'favicon.ico')
+
+
+@app.route('/session_history', methods=['GET'])
+def session_history():
+    """Return the current in-memory session history (cleared on app restart)."""
+    try:
+        data = get_session_history()
+        return jsonify({"history": data}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/clear_session_history', methods=['POST'])
+def clear_history():
+    """Clear the in-memory session history."""
+    try:
+        clear_session_history()
+        return jsonify({"message": "session history cleared"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(port=5000, debug=True)

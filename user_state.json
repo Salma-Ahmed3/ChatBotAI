@@ -1,6 +1,8 @@
 {
-    "default": {
-        "phase": "select_sector",
-        "sector": null
-    }
+  "default": {
+    "phase": "select_sector",
+    "sector": null,
+    "is_active": false,
+    "closed_at": 1761232578
+  }
 }
