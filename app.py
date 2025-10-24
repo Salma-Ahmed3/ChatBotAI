@@ -1,12 +1,10 @@
 from flask import Flask, request, jsonify, send_from_directory
 import json, os
-import google.generativeai as genai
 from services.initialize_memory import initialize_memory
 from services.get_best_answer import get_best_answer
 from services.pretty_log_question_answer import pretty_log_question_answer
 from services.state import FAQ_PATH, get_session_history, clear_session_history
-genai.configure(api_key="AIzaSyBFS6SFzJ9NPN-I7P0CoJ08dtHngoP-IRA")
-# Initialize in-memory index from FAQ file (loads embedder and builds NN index)
+from services.genai_config import API_KEY
 initialize_memory()
 
 app = Flask(__name__)
