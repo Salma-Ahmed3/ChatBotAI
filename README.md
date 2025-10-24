@@ -1,0 +1,126 @@
+Chatbot AI
+
+-نبذة عن المشروع
+
+نظام Chatbot AI  هو تطبيق ذكاء اصطناعي مبني باستخدام  Flask (Python) عن طريق Gemini يهدف إلى 
+1-	إنشاء نظام أسئلة وأجوبة ذكي يمكنه فهم اللغة الطبيعية للمستخدم
+2-	البحث عن الإجابات المناسبة من قاعدة بيانات (F & Q ) والرد بلغات متعددة باستخدام Google Gemini API
+3-	يدعم النظام تحديث قاعدة المعرفة ديناميكيًا عند كل تفاعل جديد
+4-	بحث التشابه بين الأسئلة باستخدام sklearn.neighbors import NearestNeighbors
+5-	واجهات ترجمة كشف لغة وعمليات نصية بواسطة Gemini (Google) عبر مكتبة google.generativeai
+
+-التقنيات والمكتبات المستخدمة
+المكتبة	الاستخدام
+Flask	لإنشاء واجهات  API
+sentence_transformers	لتحويل النصوص إلى Embeddings رقمية لقياس التشابه
+sklearn.neighbors	للبحث عن أقرب الأسئلة بناءً على التشابه الكوني (Cosine Similarity)
+google.generativeai	للتفاعل مع نموذج Gemini من Google للترجمة وتوليد الردود الذكية
+BeautifulSoup	لتحليل النصوص أو صفحات HTML (مستقبلًا عند الحاجة
+bidi.algorithm	لتصحيح عرض النصوص العربية (من اليمين إلى اليسار)
+json, os, re, time	أدوات مساعدة لإدارة الملفات والنصوص
+ 
+البنية العامة للكود
+1-	تهيئة النظام 
+  
+   app = Flask(__name__) 
+   genai.configure(api_key="API_KEY")
+   embedder = SentenceTransformer("all-MiniLM-L6-v2")
+      FAQ_PATH = os.path.join(os.path.dirname(__file__), "faq.json")
+
+•	يتم إنشاء تطبيق Flask وتشغيل مكتبة  Gemini  
+•	تحميل نموذج MiniLM  لتحويل الجمل إلى تمثيلات رقمية (Embeddings).
+•	مسار ملف الأسئلة والأجوبة
+
+2-	الإعدادات العامة
+  TOP_K = 5                
+  EMB_WEIGHT = 0.
+  TOKEN_WEIGHT = 0.3           
+  COMBINED_THRESHOLD = 0.60   
+
+•	TOP_K : عدد النتائج المحتملة عند البحث عن الأسئلة المشابهة.
+•	EMP_WEIGHT :  أوزان الدمج بين تشابه الكلمات وتشابه الـ Embeddings.
+•	TOKEN_WEIGHT : وزن تشابه الكلمات المفتاحية .
+•	COMBINED_THRESHOLD: الحد الأدنى لقبول الإجابة كمتشابهة.
+
+3-	المتغيرات والهيكل الداخلي للذاكرة
+
+    questions, answers, token_sets = [], [], []   
+
+   nn_model = NearestNeighbors(n_neighbors=1, metric="cosine") 
+
+4-	دوال مساعدة لمعالجة النص العربي
+
+  def remove_diacritics(text):
+    return re.sub(r'[\u0610-\u061A\u064B-\u065F\u06D6-\u06ED]',
+        '',        text)
+
+  def normalize_ar(text):
+    t = text.lower()
+    t = remove_diacritics(t)
+    t = re.sub(r'[^\u0600-\u06FF\s]', ' ', t)  
+    return re.sub(r'\s+', ' ', t).strip()
+
+  def tokens_from_text(text):
+    t = normalize_ar(text)
+    return [w for w in t.split() if w and w not in ARABIC_STOPWORDS]
+
+
+  def token_overlap_score(q_tokens, c_tokens):
+    if not c_tokens:
+        return 0.0
+    return len(set(q_tokens) & set(c_tokens)) / max(len(c_tokens), 1)
+5-	تحميل وتحديث قاعدة البيانات (FAQ) 
+
+-	load_faq_data()
+يقرأ   faq.jsonمسار ويعيد  JSON ( الإجابة ) واذا لم يجد إجابة أو فشل القراءة يعيد رسالة  ( لم أجد الإجابة المناسبه حاليا ) . 
+
+-	build_index_from_memory()
+يستخدم embedder.encode(questions) لإنشاء متجهات ثم يدرّب NearestNeighbors على هذه المتجهات بحيث يمكن البحث السريع بالتشابه .
+
+-	initialize_memory()
+يحمّل بيانات الـ FAQ عبر load_faq_data()، يفرغ القوائم المحفوظة، ثم يستخرج الأسئلة والإجابات من بنية JSON ويخزّنها في questions وanswers وtoken_sets ثم يبني الفهرس إذا وجدت أسئلة. يستدعى تلقائيًا عند بدء التطبيق.
+
+6-	حفظ أو تحديث سؤال/إجابة (save_or_update_qa (
+-	الدالة تقرأ الملف، تحوّل السؤال القادم إلى توكنز، وتبحث عن سؤال مشابه اعتمادًا على
+token_overlap_score >= 0.6).)
+-	إذا وُجد سؤال متقارب: تُحدّث إجابات السؤال الموجود.
+-	إن لم يوجد: تُنشئ موضوعًا جديدًا(new_topic)  باستخدام extract_topic(question) ثم تضيف السؤال وقائمة الإجابات (تحويل النص إلى قائمة عند وجود أسطر متعددة).
+-	أخيرًا تُكتب البيانات إلى FAQ_PATH وتستدعي initialize_memory()  لإعادة بناء الفهرس في الذاكرة.
+
+7-	استخراج الموضوع (extract_topic (
+دالة بسيطة: تزيل بعض كلمات الاستفهام الشهيرة وتأخذ أول 3 كلمات لتشكيل اسم الموضوع التابعي
+
+8-	فلترة محسّنة (filter_answers_by_query)
+خوارزمية من خطوتين:
+1.	تحاول العثور على سؤال مخزن يكون متطابقًا/متقاربًا على مستوى التوكنز (تداخل >= 0.5). إذا وُجد تُرجع إجابات ذلك السؤال (أولوية الأسئلة المخزنة).
+2.	كنسخة احتياطية، تبحث داخل نصوص الإجابات والأسئلة عن أي توكن موجود في الطلب وتُجمّع النتائج لتُرجعها.
+ترجع None إذا لم توجد نتائج. تُستخدم هذه الدالة داخل get_best_answer() قبل البحث بالـ Embeddings.
+
+
+9-	 الدالة الرئيسة: get_best_answer(user_input)
+
+1-	كشف اللغة والردات الترحيبية: تستدعي Gemini (genai.GenerativeModel("models/gemini-2.5-pro")) وتمرّر prompt لتحديد اللغة أو إعطاء رد ترحيبي جاهز (إذا كان الإدخال مجرد تحية). قد تُعيد نصّ الترحيب مباشرة.
+2-	ترجمة السؤال إلى العربية إن لزم: إذا اللغة المكتشفة ليست العربية، تطلب من Gemini ترجمة السؤال إلى العربية (النتيجة تُستخدم للبحث).
+3-	ترجمة الإجابة للمستخدم (إن لم تكن العربية): يطلب Gemini ترجمة نص الإجابة إلى لغة المستخدم.
+4-	التحقق من الأحياء/العناوين: إذا احتوى السؤال على كلمات مثل "حي" أو "العناوين" يقوم بمجموعة من الفحوصات للبحث في قسم العناوين داخل faq.json ويُعيد صيغ رد فعلية (مثل "نعم، حي X موجود ✅" أو قائمة أحياء متاحة). هذا جزء مُفصّل للتعامل مع أسئلة الأماكن.
+5-	فلترة أولية: يستخدم filter_answers_by_query()  لإعطاء أولوية لإجابات محفوظة متطابقة. إن وُجدت إجابات مُفلترة، يترجمها مرة أخرى إلى لغة المستخدم إن كانت مختلفة.
+6-	بحث Embedding +  كلمات مفتاحية:
+1-	يولّد متجه للسؤال (embedder.encode([translated_for_search]))
+2-	يستدعي nn_model.kneighbors للحصول على أقرب نتائج (TOP_K) ويحسب تشابه الـ embedding (emb_sim = 1 - dist)
+3-	يتحقّق من وجود تطابق بكلمات مفتاحية داخل questions[idx] أو answers[idx] ويقارن emb_sim بـ COMBINED_THRESHOLD قبل قبول النتيجة. إذا لم توجد نتائج مناسبة يُرجع رسالة افتراضية.
+7-	حفظ السؤال/الإجابة: في النهاية يحاول استدعاء
+save_or_update_qa(translated_for_search, answer)
+لتخزين ما تعلمه أو السؤال الجديد في faq.json ثم يعيد الإجابة النهائية.
+
+
+
+
+10-	 واجهات HTTP (Endpoints)
+
+1-	/upload_faq (GET, POST)
+GET  : يعيد محتوىfaq_data.json  إن وجد.
+POST : يقبل قائمة ( JSON ) ويكتبها إلى faq_data.json ثم ينفّذ initialize_memory().  يعيد رسائل نجاح/خطأ.
+
+
+
+
