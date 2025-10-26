@@ -39,7 +39,6 @@ def fetch_services_from_api():
 
         result = (
             "لدينا العديد من الخدمات في قطاعات مختلفة، من فضلك اختر رقم القطاع لجلب الخدمات بداخله:\n\n"
-            + "\n".join(services)
         )
         return result
 
@@ -77,48 +76,44 @@ def fetch_service_by_number(number):
 
             # إذا لم نحفظ بيانات الخدمات الفرعية من قبل ــ فنجلبها الآن
             if "sub_services_data" not in service:
-                # محاولة جلب نفس بيانات القطاع كما نقوم عند عرض القائمة
-                if sector_idx == 1:
-                    url = SERVICES_DETAILS_API.format(sector_idx)
-                    print(f"📡 جلب بيانات القطاع 1 من {url}")
-                    resp = requests.get(url, timeout=10)
-                    if resp.status_code == 200:
-                        data = resp.json().get("data", [])
-                    else:
-                        return "⚠️ حدث خطأ أثناء جلب خدمات هذا القطاع."
-                elif sector_idx == 2:
-                    url = PROFESSIONGROUP_API.format(sector_idx)
-                    print(f"📡 جلب بيانات القطاع 2 من {url}")
-                    resp = requests.get(url, timeout=10)
-                    if resp.status_code == 200:
-                        data = resp.json().get("data", [])
-                    else:
-                        return "⚠️ حدث خطأ أثناء جلب خدمات هذا القطاع."
+                url = SERVICES_DETAILS_API.format(sector_idx)
+                print(f"📡 جلب بيانات القطاع {sector_idx} من {url}")
+                resp = requests.get(url, timeout=10)
+                if resp.status_code == 200:
+                    data = resp.json().get("data", [])
                 else:
-                    data = []
-
+                    return "⚠️ حدث خطأ أثناء جلب خدمات هذا القطاع."
                 service["sub_services_data"] = data
+            else:
+                data = service["sub_services_data"]
 
-            data = service.get("sub_services_data", [])
             if not data:
                 return f"❌ لا توجد خدمات متاحة في القطاع ({sector_idx})."
 
             last_option_num = len(data) + 1
-            # حفظ رقم اخر خيار على شكل "X.Y"
             SERVICES_MAP["last_option_for_sector"] = {
                 "sector_number": sector_idx,
                 "last_option_number": f"{sector_idx}.{last_option_num}",
             }
 
+            # لو اختار "أخرى"
             if sub_idx == last_option_num:
                 return "من فضلك أدخل اسمك ورقم هاتفك وعنوانك والحي ليتم حفظ بياناتك."
 
             if 1 <= sub_idx <= len(data):
                 item = data[sub_idx - 1]
-                # بعض الـAPIs تستخدم مفاتيح مختلفة
-                name = item.get("name") or item.get("value") or item.get("title") or "خدمة بدون اسم"
-                desc = item.get("description") or item.get("notes") or "لا يوجد وصف"
-                return f"{name.strip()} : {desc.strip()}"
+                name = item.get("name", "خدمة بدون اسم").strip()
+                desc = item.get("description", "لا يوجد وصف").strip()
+                note = item.get("serviceNote", "")
+                action_type = item.get("actionType")
+
+                # 👇 المنطق الجديد حسب نوع الـ actionType
+                if action_type == 1 and note:
+                    return f"📋 {name}\n\n{note.strip()}"
+                elif action_type == 2:
+                    return f" {name}\n\nالخدمة ستكون متاحة قريباً ⏳ \n  للاستكمال سيتم اجراء طلبك عن طريق الاسم و رقم الهاتف و المدينة و الحي التي قمت بارسالها مسبقاً \n اخبرني باجابة نعم للمتابعة او لا للالغاء \n شكراً لتفهمك"
+                else:
+                    return f"{name} : {desc.strip()}"
 
             return f"⚠️ الرقم {sector_idx}.{sub_idx} غير متوفر. الرجاء اختيار رقم من الأرقام المعروضة."
         # معاملة الإدخال كرقم قطاع (مثل 1)
