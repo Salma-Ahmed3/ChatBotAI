@@ -12,10 +12,71 @@ from .save_or_update_qa import save_or_update_qa
 from keyWords import SERVICSE_KEYWORDS
 from services.load_faq_data import load_faq_data
 from .fetch_services_from_api import is_other_option
-
-
+from .user_info_manager import collect_user_info, update_user_info, load_user_data, save_user_data, create_lead_hourly
+import json
+import requests
 
 def get_best_answer(user_input):
+    user_data = load_user_data()
+
+    # نطبع نسخة مُطَبَّعة من السؤال مبكراً لاستخدامها في اكتشاف الخدمات
+    normalized_q = normalize_ar(user_input)
+
+    # أولاً: إذا المستخدم يسأل عن الخدمات، نتحقق هل لدينا بياناته كاملة
+    service_related = any(word in normalized_q for word in SERVICSE_KEYWORDS)
+    if service_related:
+        print(f"🔍 تم اكتشاف سؤال عن الخدمات: {user_input}")
+        # لو بيانات المستخدم ناقصة، نسجل أن هناك إجراء معلق ثم نطلب البيانات المطلوبة
+        missing = [f for f in ["name", "phone", "city", "district"] if not user_data.get(f)]
+        if missing:
+            # حفظ الإجراء المعلق حتى يتم ارسال البيانات
+            update_user_info("pending_action", "services")
+            update_user_info("pending_query", user_input)
+            # رسالة تمهيدية قبل طلب الحقل الأول
+            initial_msg = "لِلإجابة عن سؤالك سوف نطلب منك بعض البيانات لإدخالها. لنقم بمتابعة طلبك:"
+            msg, next_field = collect_user_info()
+            if msg:
+                # نعرض الرسالة التمهيدية متبوعة بسؤال الحقل المطلوب
+                return initial_msg + "\n\n" + msg
+        # لو البيانات كاملة، نرجع قائمة الخدمات مباشرة
+        return fetch_services_from_api()
+
+    # =====================
+    # تأكيد المستخدم للطلب عندما يظهر له نص المتابعة "سوف نقوم الان..." ويكتب نعم/لا
+    # =====================
+    try:
+        ud = load_user_data()
+        pending = ud.get("pending_action")
+        normalized_yes = re.fullmatch(r"\s*(نعم|yes)\s*[\.?؟!]*\s*$", normalized_q, flags=re.IGNORECASE)
+        normalized_no = re.fullmatch(r"\s*(لا|no)\s*[\.?؟!]*\s*$", normalized_q, flags=re.IGNORECASE)
+
+        if pending == "services" and (normalized_yes or normalized_no):
+            # user confirmed
+            if normalized_yes:
+                # تأكد من توفر البيانات المطلوبة
+                missing = [f for f in ["name", "phone", "city", "district"] if not ud.get(f)]
+                if missing:
+                    msg, next_field = collect_user_info()
+                    if msg:
+                        return msg
+
+                # الآن جميع البيانات متوفرة، أرسل الطلب
+                ok, resp_msg, sent_body = create_lead_hourly(pending_query=ud.get("pending_query"))
+                if ok:
+                    pretty = json.dumps(sent_body, ensure_ascii=False, indent=2)
+                    return f"✅ تم إرسال الطلب بنجاح!"
+                else:
+                    return f"⚠️ فشل إرسال الطلب: {resp_msg}\n\nسنحتفظ بطلبك لمحاولة الإرسال لاحقاً."
+
+            # user canceled
+            if normalized_no:
+                ud.pop("pending_action", None)
+                ud.pop("pending_query", None)
+                save_user_data(ud)
+                return "✅ تم إلغاء إنشاء الطلب حسب طلبك. إذا رغبت في خدمات أخرى أبلغني." 
+    except Exception as e:
+        print(f"⚠️ خطأ أثناء معالجة تأكيد الطلب: {e}")
+
     if not check_text_safety(user_input):
         responses = {
             "ar": "عذراً، هذا أسلوب غير لائق. نرجو التحدث باحترام. شكراً لتفهمك 🚫",
@@ -24,12 +85,89 @@ def get_best_answer(user_input):
             "es": "Lo siento, este lenguaje es inapropiado. Por favor, comuníquese respetuosamente. Gracias por su comprensión 🚫"
         }
 
-    normalized_q = normalize_ar(user_input)
+    # إذا المستخدم يرسل بيانات مطلوبة (الاسم، الهاتف، المدينة، الحي) فنسجلها
+    # لا نعتبر المرسل يسأل عن الحقل اذا كتب كلمات مثل 'اسم' أو 'رقم' أو 'مدينة' أو 'حي' (سؤال)
+    for field in ["name", "phone", "city", "district"]:
+        if not user_data.get(field):
+            # تجاهل الإدخال إذا بدا أن المستخدم يطرح سؤالاً عن الحقل
+            if len(user_input.strip().split()) >= 1 and not any(x in user_input for x in ["اسم", "رقم", "مدينة", "حي"]):
 
-    service_related = any(word in normalized_q for word in SERVICSE_KEYWORDS)
-    if service_related:
-        print(f"🔍 تم اكتشاف سؤال عن الخدمات: {user_input}")
-        return fetch_services_from_api()
+                # ✅ التحقق من المدينة
+                if field == "city":
+                    try:
+                        resp = requests.get("https://erp.rnr.sa:8005/ar/api/city/ActiveCities", timeout=10)
+                        if resp.status_code == 200:
+                            cities_data = resp.json().get("data", [])
+                            matched_city = next((c for c in cities_data if c["value"].strip() == user_input.strip()), None)
+                            if matched_city:
+                                update_user_info("city", user_input.strip())
+                                update_user_info("city_id", matched_city["key"])  # حفظ id المدينة
+                                msg, next_field = collect_user_info()
+                                if msg:
+                                    return msg  # يسأل المستخدم عن الحي الآن
+                            else:
+                                return f"❌ المدينة '{user_input}' غير متوفرة حالياً، سيتم توفيرها قريباً بإذن الله \n من فضلك قم باختيار مدينة اخرى لمتابعه انشاء الطلب."
+                        else:
+                            return "⚠️ حدث خطأ أثناء التحقق من المدينة، حاول مرة أخرى لاحقاً."
+                    except Exception as e:
+                        print(f"⚠️ خطأ أثناء التحقق من المدينة: {e}")
+                        return "حدث خطأ أثناء الاتصال بخدمة المدن. حاول مرة أخرى لاحقاً."
+
+                # ✅ التحقق من الحي بناءً على المدينة السابقة
+                elif field == "district":
+                    try:
+                        city_id = user_data.get("city_id")
+                        if not city_id:
+                            return "⚠️ من فضلك أدخل اسم المدينة أولاً قبل الحي."
+
+                        url = f"https://erp.rnr.sa:8005/ar/api/city/CityDistricts?cityId={city_id}"
+                        resp = requests.get(url, timeout=10)
+                        if resp.status_code == 200:
+                            districts_data = resp.json().get("data", [])
+                            matched_district = next((d for d in districts_data if d["value"].strip() == user_input.strip()), None)
+                            if matched_district:
+                                update_user_info("district", user_input.strip())
+                                update_user_info("district_id", matched_district["key"])  # حفظ id الحي
+                                msg, next_field = collect_user_info()
+                                if msg:
+                                    return msg
+                                else:
+                                    # بعد اكتمال البيانات بالكامل
+                                    ud = load_user_data()
+                                    pending = ud.get("pending_action")
+                                    if pending == "services":
+                                        ud.pop("pending_action", None)
+                                        ud.pop("pending_query", None)
+                                        save_user_data(ud)
+                                        services_text = fetch_services_from_api()
+                                        return "✅ تم حفظ بياناتك بنجاح!\n\n" + services_text
+                                    return "✅ تم حفظ بياناتك بنجاح! يمكنك المتابعة الآن."
+                            else:
+                                return f"❌ الحي '{user_input}' غير متوفر حالياً في مدينتك، سيتم إضافته قريباً بإذن الله الرجاء اختيار حي اخر."
+                        else:
+                            return "⚠️ حدث خطأ أثناء التحقق من الحي، حاول مرة أخرى لاحقاً."
+                    except Exception as e:
+                        print(f"⚠️ خطأ أثناء التحقق من الحي: {e}")
+                        return "حدث خطأ أثناء الاتصال بخدمة الأحياء. حاول مرة أخرى لاحقاً."
+
+                # 🔹 الحقول العادية (الاسم، الهاتف)
+                else:
+                    update_user_info(field, user_input)
+                    msg, next_field = collect_user_info()
+                    if msg:
+                        return msg
+                    else:
+                        ud = load_user_data()
+                        pending = ud.get("pending_action")
+                        if pending == "services":
+                            ud.pop("pending_action", None)
+                            ud.pop("pending_query", None)
+                            save_user_data(ud)
+                            services_text = fetch_services_from_api()
+                            return "✅ تم حفظ بياناتك بنجاح!\n\n" + services_text
+                        return "✅ تم حفظ بياناتك بنجاح! يمكنك المتابعة الآن."
+
+            # إذا كتب المستخدم شيئًا يبدو كسؤال عن الحقل (مثل 'ما اسمك؟')، نتجاهل هذا الجزء من التخزين
 
     # If the user input is just a number (Arabic-Indic or Western numerals), treat it as a selection
     trans = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
@@ -62,9 +200,7 @@ def get_best_answer(user_input):
         from .fetch_services_from_api import SERVICES_MAP
         # If we haven't shown services yet, asking a raw number shouldn't fetch data.
         if not SERVICES_MAP:
-            return (
-                "هل تقصد اختيار خدمة من القائمة؟ لعرض القطاعات المتاحة اكتب 'خدمات' أولاً أو وضّح طلبك وسأنصحك بالخطوة التالية."
-            )
+            return "هل تقصد اختيار خدمة من القائمة؟ اكتب 'خدمات' أولاً."
 
         info = SERVICES_MAP.get("last_option_for_sector")
         current_sector = info["sector_number"] if info else None
@@ -151,58 +287,58 @@ def get_best_answer(user_input):
                 return filtered_answers
         return filtered_answers
 
-    if "حي" in normalized_q or "احياء" in normalized_q or "العناوين" in normalized_q:
-        for topic in data:
-            if normalize_ar(topic.get("topic", "")) == "العناوين":
-                questions_list = topic.get("questions", [])
-                if not questions_list:
-                    break
+    # if "حي" in normalized_q or "احياء" in normalized_q or "العناوين" in normalized_q:
+    #     for topic in data:
+    #         if normalize_ar(topic.get("topic", "")) == "العناوين":
+    #             questions_list = topic.get("questions", [])
+    #             if not questions_list:
+    #                 break
 
-                cities = questions_list[0].get("answers", [])
-                city_text = " ".join(cities)
-                cities_cleaned = [
-                    c.strip().replace("،", "").replace(".", "")
-                    for c in city_text.split()
-                    if len(c.strip()) > 1
-                ]
+    #             cities = questions_list[0].get("answers", [])
+    #             city_text = " ".join(cities)
+    #             cities_cleaned = [
+    #                 c.strip().replace("،", "").replace(".", "")
+    #                 for c in city_text.split()
+    #                 if len(c.strip()) > 1
+    #             ]
 
-                for city in cities_cleaned:
-                    if normalize_ar(city) in normalized_q:
-                        for sub_topic in data:
-                            if normalize_ar(sub_topic.get("topic", "")) == f"العناوين {normalize_ar(city)}":
-                                areas = []
-                                for q in sub_topic.get("questions", []):
-                                    for ans in q.get("answers", []):
-                                        areas.extend(ans.replace("،", ",").split(","))
-                                areas = [a.strip() for a in areas if a.strip()]
+    #             for city in cities_cleaned:
+    #                 if normalize_ar(city) in normalized_q:
+    #                     for sub_topic in data:
+    #                         if normalize_ar(sub_topic.get("topic", "")) == f"العناوين {normalize_ar(city)}":
+    #                             areas = []
+    #                             for q in sub_topic.get("questions", []):
+    #                                 for ans in q.get("answers", []):
+    #                                     areas.extend(ans.replace("،", ",").split(","))
+    #                             areas = [a.strip() for a in areas if a.strip()]
 
-                                for area in areas:
-                                    if normalize_ar(area) in normalized_q:
-                                        return f"نعم، حي {area} موجود ✅"
+    #                             for area in areas:
+    #                                 if normalize_ar(area) in normalized_q:
+    #                                     return f"نعم، حي {area} موجود ✅"
 
-                                return (
-                                    f"الحي المطلوب غير موجود في {city} ❌\n"
-                                    f"هل ترغب أن أظهر لك الأحياء المتوفرة في {city}؟\n\n"
-                                    "اكتب اسم المدينة الآن وسأعرضها لك 👇"
-                                )
+    #                             return (
+    #                                 f"الحي المطلوب غير موجود في {city} ❌\n"
+    #                                 f"هل ترغب أن أظهر لك الأحياء المتوفرة في {city}؟\n\n"
+    #                                 "اكتب اسم المدينة الآن وسأعرضها لك 👇"
+    #                             )
 
-                all_areas = []
-                for sub_topic in data:
-                    if normalize_ar(sub_topic.get("topic", "")).startswith("العناوين"):
-                        for q in sub_topic.get("questions", []):
-                            for ans in q.get("answers", []):
-                                all_areas.extend(ans.replace("،", ",").split(","))
-                all_areas = [a.strip() for a in all_areas if a.strip()]
+    #             all_areas = []
+    #             for sub_topic in data:
+    #                 if normalize_ar(sub_topic.get("topic", "")).startswith("العناوين"):
+    #                     for q in sub_topic.get("questions", []):
+    #                         for ans in q.get("answers", []):
+    #                             all_areas.extend(ans.replace("،", ",").split(","))
+    #             all_areas = [a.strip() for a in all_areas if a.strip()]
 
-                for area in all_areas:
-                    if normalize_ar(area) in normalized_q:
-                        return f"نعم، حي {area} موجود ✅"
+    #             for area in all_areas:
+    #                 if normalize_ar(area) in normalized_q:
+    #                     return f"نعم، حي {area} موجود ✅"
 
-                return (
-                    "الحي المطلوب غير موجود ❌\n"
-                    "من فضلك اختر المدينة لمعرفة الأحياء المتوفرة فيها 👇\n\n"
-                    "المدن المتاحة: الرياض، جدة، المدينة المنورة"
-                )
+    #             return (
+    #                 "الحي المطلوب غير موجود ❌\n"
+    #                 "من فضلك اختر المدينة لمعرفة الأحياء المتوفرة فيها 👇\n\n"
+    #                 "المدن المتاحة: الرياض، جدة، المدينة المنورة"
+    #             )
 
     t3 = time.time()
     if not QUESTIONS:
@@ -250,4 +386,14 @@ def get_best_answer(user_input):
         save_or_update_qa(translated_for_search, answer)
     except Exception as e:
         print("⚠️ فشل أثناء الحفظ:", e)
-    return final_answer
+    # 🟩 في النهاية، بعد توليد الإجابة، نتحقق من بيانات المستخدم
+    msg, next_field = collect_user_info()
+    if msg:
+        # نضيف سؤال البيانات بعد الإجابة الأصلية
+        return f"{final_answer}\n\n📋 {msg}"
+    else:
+        return final_answer
+
+
+
+

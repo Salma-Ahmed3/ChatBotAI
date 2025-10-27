@@ -39,6 +39,7 @@ def fetch_services_from_api():
 
         result = (
             "لدينا العديد من الخدمات في قطاعات مختلفة، من فضلك اختر رقم القطاع لجلب الخدمات بداخله:\n\n"
+                + "\n".join(services)
         )
         return result
 
@@ -98,7 +99,16 @@ def fetch_service_by_number(number):
 
             # لو اختار "أخرى"
             if sub_idx == last_option_num:
-                return "من فضلك أدخل اسمك ورقم هاتفك وعنوانك والحي ليتم حفظ بياناتك."
+                # نضع حالة معلقة تفيد بأن المستخدم يريد الخدمات بعد إدخال بياناته
+                from .user_info_manager import collect_user_info, update_user_info
+                update_user_info("pending_action", "services")
+                update_user_info("pending_query", f"{sector_idx}.{sub_idx}")
+                msg, field = collect_user_info()
+                if msg:
+                    return msg
+                else:
+                    return "سوف نقوم الان بإنشاء طلبك بناءً على بياناتك المسجلة مسبقاً. شكراً لتفهمك , اذا اردت المتابعة ارسل نعم و لا للالغاء "
+
 
             if 1 <= sub_idx <= len(data):
                 item = data[sub_idx - 1]
@@ -107,7 +117,7 @@ def fetch_service_by_number(number):
                 note = item.get("serviceNote", "")
                 action_type = item.get("actionType")
 
-                # 👇 المنطق الجديد حسب نوع الـ actionType
+                #  المنطق الجديد حسب نوع الـ actionType
                 if action_type == 1 and note:
                     return f"📋 {name}\n\n{note.strip()}"
                 elif action_type == 2:
