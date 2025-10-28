@@ -70,8 +70,29 @@ def session_history():
 def clear_history():
     """Clear the in-memory session history."""
     try:
+        # clear in-memory session + persisted session file
         clear_session_history()
-        return jsonify({"message": "session history cleared"}), 200
+
+        files_to_clear = [
+            # os.path.join(os.path.dirname(__file__), "user_data.json"),
+            os.path.join(os.path.dirname(__file__), "ServiceForService.json"),
+            os.path.join(os.path.dirname(__file__), "HourlyServicesShift.json"),
+        ]
+        cleared = []
+        for path in files_to_clear:
+            try:
+                # overwrite with empty JSON object; create file if missing
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump({}, f, ensure_ascii=False, indent=2)
+                cleared.append(os.path.basename(path))
+            except Exception as e:
+                # don't fail the whole operation if one file can't be written
+                print(f"⚠️ failed clearing {path}: {e}")
+
+        return jsonify({
+            "message": "session history cleared",
+            "cleared_files": cleared
+        }), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
