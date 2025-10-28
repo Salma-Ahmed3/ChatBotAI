@@ -2,8 +2,8 @@ import json
 import os
 import requests
 import uuid
-
 USER_DATA_PATH = os.path.join(os.path.dirname(__file__), "..", "user_data.json")
+HOURLYLEAD_API = "https://erp.rnr.sa:8005/ar/api/Lead/CreateHourly"
 
 def load_user_data():
     """تحميل بيانات المستخدم من الملف"""
@@ -46,14 +46,10 @@ def update_user_info(field, value):
     user_data = load_user_data()
     # Normalize and save
     v = value.strip()
-    # تحويل أرقام عربية هندية للعربية الغربية عند حفظ رقم الهاتف
     if field == "phone":
         trans = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
         v = v.translate(trans)
-
     user_data[field] = v
-
-    # إذا حفظنا رقم الهاتف ولم يكن هناك contactId، ننشئ واحد (UUID) ونخزنه
     if field == "phone":
         if not user_data.get("contactId") and not user_data.get("contact_id"):
             new_id = str(uuid.uuid4())
@@ -70,7 +66,7 @@ def create_lead_hourly(pending_query=None, description=None):
     try:
         user_data = load_user_data()
 
-        url = "https://erp.rnr.sa:8005/ar/api/Lead/CreateHourly"
+        url = HOURLYLEAD_API
 
         body = {
             "description": description or f"طلب وارد من البوت (خيار: {pending_query})",

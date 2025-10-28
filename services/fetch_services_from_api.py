@@ -1,9 +1,13 @@
 import requests
+import os
+import json
+import requests
 from .state import FAQ_PATH
 
 SERVICE_API = "https://erp.rnr.sa:8016/api/content/Search/ar/mobileServicesSection?withchildren=true"
 SERVICES_DETAILS_API = "https://erp.rnr.sa:8005/ar/api/Service/ServicesForService?serviceType={}"
 PROFESSIONGROUP_API = "https://erp.rnr.sa:8005/ar/api/ProfessionGroups/AvailableProfessions"
+SERVICE_FOR_SERVICE_PATH = os.path.join(os.path.dirname(__file__), "..", "ServiceForService.json")
 
 SERVICES_MAP = {}
 
@@ -48,6 +52,28 @@ def fetch_services_from_api():
         return "حدث خطأ أثناء جلب القطاعات، يرجى المحاولة لاحقاً."
 
 
+def save_service_data(data):
+    """حفظ بيانات الخدمة في ملف JSON"""
+    try:
+        service_data = {}
+        if os.path.exists(SERVICE_FOR_SERVICE_PATH):
+            with open(SERVICE_FOR_SERVICE_PATH, "r", encoding="utf-8") as f:
+                try:
+                    service_data = json.load(f)
+                except json.JSONDecodeError:
+                    pass
+        
+        for service in data:
+            service_id = service.get("id")
+            if service_id:
+                service_data[service_id] = service
+        
+        with open(SERVICE_FOR_SERVICE_PATH, "w", encoding="utf-8") as f:
+            json.dump(service_data, f, ensure_ascii=False, indent=2)
+            
+    except Exception as e:
+        print(f"⚠️ خطأ في حفظ بيانات الخدمة: {e}")
+
 def fetch_service_by_number(number):
     """جلب الخدمات داخل القطاع المحدد حسب رقمه"""
     try:
@@ -82,6 +108,7 @@ def fetch_service_by_number(number):
                 resp = requests.get(url, timeout=10)
                 if resp.status_code == 200:
                     data = resp.json().get("data", [])
+                    # save_service_data(data)
                 else:
                     return "⚠️ حدث خطأ أثناء جلب خدمات هذا القطاع."
                 service["sub_services_data"] = data
@@ -116,6 +143,10 @@ def fetch_service_by_number(number):
                 desc = item.get("description", "لا يوجد وصف").strip()
                 note = item.get("serviceNote", "")
                 action_type = item.get("actionType")
+                service_id = item.get("id", "")
+                print(f"🔍 تم اختيار الخدمة {name} مع المعرف {service_id}")
+                # تأكيد حفظ بيانات الخدمة المختارة
+                save_service_data([item])
 
                 #  المنطق الجديد حسب نوع الـ actionType
                 if action_type == 1 and note:
@@ -158,10 +189,15 @@ def fetch_service_by_number(number):
             if not data:
                 return f"❌ لا توجد خدمات متاحة في القطاع ({idx})."
 
+            # حفظ بيانات الخدمات في الملف JSON
+            save_service_data(data)
+
             sub_services = []
             for i, item in enumerate(data, 1):
                 name = item.get("name", "خدمة بدون اسم").strip()
                 desc = item.get("description", "لا يوجد وصف").strip()
+                service_id = item.get("id", "")
+                print(f"💾 حفظ بيانات الخدمة {name} مع المعرف {service_id}")
                 sub_services.append(f"{idx}.{i}. {name} : {desc}")
 
             #  إضافة خيار "أخرى" بعد آخر خدمة

@@ -15,7 +15,8 @@ from .fetch_services_from_api import is_other_option
 from .user_info_manager import collect_user_info, update_user_info, load_user_data, save_user_data, create_lead_hourly
 import json
 import requests
-
+CITY_API = "https://erp.rnr.sa:8005/ar/api/city/ActiveCities"
+CITYDISTRICT_API = "https://erp.rnr.sa:8005/ar/api/city/CityDistricts?cityId"
 def get_best_answer(user_input):
     user_data = load_user_data()
 
@@ -95,7 +96,7 @@ def get_best_answer(user_input):
                 # ✅ التحقق من المدينة
                 if field == "city":
                     try:
-                        resp = requests.get("https://erp.rnr.sa:8005/ar/api/city/ActiveCities", timeout=10)
+                        resp = requests.get(CITY_API, timeout=10)
                         if resp.status_code == 200:
                             cities_data = resp.json().get("data", [])
                             matched_city = next((c for c in cities_data if c["value"].strip() == user_input.strip()), None)
@@ -120,7 +121,7 @@ def get_best_answer(user_input):
                         if not city_id:
                             return "⚠️ من فضلك أدخل اسم المدينة أولاً قبل الحي."
 
-                        url = f"https://erp.rnr.sa:8005/ar/api/city/CityDistricts?cityId={city_id}"
+                        url = f"{CITYDISTRICT_API}={city_id}"
                         resp = requests.get(url, timeout=10)
                         if resp.status_code == 200:
                             districts_data = resp.json().get("data", [])
