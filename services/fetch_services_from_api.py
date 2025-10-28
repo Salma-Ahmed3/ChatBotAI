@@ -1,13 +1,16 @@
 import requests
 import os
 import json
+import time
 import requests
 from .state import FAQ_PATH
 
 SERVICE_API = "https://erp.rnr.sa:8016/api/content/Search/ar/mobileServicesSection?withchildren=true"
 SERVICES_DETAILS_API = "https://erp.rnr.sa:8005/ar/api/Service/ServicesForService?serviceType={}"
 PROFESSIONGROUP_API = "https://erp.rnr.sa:8005/ar/api/ProfessionGroups/AvailableProfessions"
+SHIFTS_API = "https://erp.rnr.sa:8005/ar/api/HourlyContract/Shifts?serviceId={}"
 SERVICE_FOR_SERVICE_PATH = os.path.join(os.path.dirname(__file__), "..", "ServiceForService.json")
+HOURLY_SHIFTS_PATH = os.path.join(os.path.dirname(__file__), "..", "HourlyServicesShift.json")
 
 SERVICES_MAP = {}
 
@@ -147,6 +150,13 @@ def fetch_service_by_number(number):
                 print(f"🔍 تم اختيار الخدمة {name} مع المعرف {service_id}")
                 # تأكيد حفظ بيانات الخدمة المختارة
                 save_service_data([item])
+                
+                # جلب وحفظ الفترات المتاحة للخدمة إذا كانت من القطاع 1 وحالتها نشطة
+                if sector_idx == 1 and action_type == 1 and service_id:  # نجلب الفترات فقط للخدمات النشطة في القطاع الأول
+                    print(f"⏳ جاري جلب الفترات للخدمة {name}...")
+                    shifts = fetch_service_shifts(service_id)
+                    if shifts:
+                        print(f"📅 تم العثور على {len(shifts)} فترة متاحة للخدمة وتم حفظها")
 
                 #  المنطق الجديد حسب نوع الـ actionType
                 if action_type == 1 and note:
@@ -197,6 +207,14 @@ def fetch_service_by_number(number):
                 name = item.get("name", "خدمة بدون اسم").strip()
                 desc = item.get("description", "لا يوجد وصف").strip()
                 service_id = item.get("id", "")
+                action_type = item.get("actionType")
+                
+                # جلب وحفظ الفترات للخدمات النشطة مباشرة عند عرض القائمة
+                if action_type == 1 and service_id:
+                    print(f"⏳ جاري جلب الفترات للخدمة {name}...")
+                    shifts = fetch_service_shifts(service_id)
+                    if shifts:
+                        print(f"📅 تم العثور على {len(shifts)} فترة متاحة للخدمة {name}")
                 print(f"💾 حفظ بيانات الخدمة {name} مع المعرف {service_id}")
                 sub_services.append(f"{idx}.{i}. {name} : {desc}")
 
@@ -269,6 +287,46 @@ def fetch_service_by_number(number):
     except Exception as e:
         print(f"⚠️ خطأ أثناء جلب تفاصيل القطاع: {e}")
         return "حدث خطأ أثناء جلب تفاصيل القطاع. حاول مرة أخرى لاحقاً."
+def fetch_service_shifts(service_id):
+    """جلب الفترات المتاحة للخدمة"""
+    try:
+        url = SHIFTS_API.format(service_id)
+        print(f"📡 جلب الفترات للخدمة {service_id} من {url}")
+        resp = requests.get(url, timeout=10)
+        
+        if resp.status_code == 200:
+            data = resp.json().get("data", [])
+            
+            # حفظ بيانات الفترات في ملف JSON منفصل
+            shifts_data = {}
+            if os.path.exists(HOURLY_SHIFTS_PATH):
+                with open(HOURLY_SHIFTS_PATH, "r", encoding="utf-8") as f:
+                    try:
+                        shifts_data = json.load(f)
+                    except json.JSONDecodeError:
+                        pass
+            
+            # تحديث بيانات الفترات للخدمة المحددة
+            shifts_data[service_id] = {
+                "service_id": service_id,
+                "shifts": data,
+                "last_updated": time.strftime("%Y-%m-%d %H:%M:%S")
+            }
+            
+            # حفظ في الملف الجديد
+            with open(HOURLY_SHIFTS_PATH, "w", encoding="utf-8") as f:
+                json.dump(shifts_data, f, ensure_ascii=False, indent=2)
+            print(f"✅ تم حفظ الفترات للخدمة {service_id} في {HOURLY_SHIFTS_PATH}")
+
+            return data
+        else:
+            print(f"⚠️ خطأ في جلب الفترات: {resp.status_code}")
+            return None
+
+    except Exception as e:
+        print(f"⚠️ خطأ أثناء جلب الفترات: {e}")
+        return None
+
 def is_other_option(sector_number, chosen_number):
     """يتأكد إن المستخدم اختار (أخرى) الخاصة بالقطاع"""
     info = SERVICES_MAP.get("last_option_for_sector")
