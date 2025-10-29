@@ -11,6 +11,8 @@ PROFESSIONGROUP_API = "https://erp.rnr.sa:8005/ar/api/ProfessionGroups/Available
 SHIFTS_API = "https://erp.rnr.sa:8005/ar/api/HourlyContract/Shifts?serviceId={}"
 SERVICE_FOR_SERVICE_PATH = os.path.join(os.path.dirname(__file__), "..", "ServiceForService.json")
 HOURLY_SHIFTS_PATH = os.path.join(os.path.dirname(__file__), "..", "HourlyServicesShift.json")
+RESOURCEGROUPS_API = "https://erp.rnr.sa:8005/ar/api/ResourceGroup/GetResourceGroupsByService?serviceId={}"
+NATIONALITY_HOURLY_PATH = os.path.join(os.path.dirname(__file__), "..", "NationalityHourly.json")
 
 SERVICES_MAP = {}
 
@@ -157,6 +159,7 @@ def fetch_service_by_number(number):
                     shifts = fetch_service_shifts(service_id)
                     if shifts:
                         print(f"📅 تم العثور على {len(shifts)} فترة متاحة للخدمة وتم حفظها")
+                    nats = fetch_service_nationalities(service_id)
 
                 #  المنطق الجديد حسب نوع الـ actionType
                 if action_type == 1 and note:
@@ -215,6 +218,7 @@ def fetch_service_by_number(number):
                     shifts = fetch_service_shifts(service_id)
                     if shifts:
                         print(f"📅 تم العثور على {len(shifts)} فترة متاحة للخدمة {name}")
+                    nats = fetch_service_nationalities(service_id)
                 print(f"💾 حفظ بيانات الخدمة {name} مع المعرف {service_id}")
                 sub_services.append(f"{idx}.{i}. {name} : {desc}")
 
@@ -256,7 +260,6 @@ def fetch_service_by_number(number):
                 notes = item.get("notes")
                 
                 sub_services.append(f"{idx}.{i}. {name} : {notes}")
-            sub_services.append(f"{idx}.{len(data) + 1}. أخرى")
 
             # حفظ بيانات الخدمات الفرعية داخل الـSERVICE_MAP
             service["sub_services_data"] = data
@@ -325,6 +328,39 @@ def fetch_service_shifts(service_id):
 
     except Exception as e:
         print(f"⚠️ خطأ أثناء جلب الفترات: {e}")
+        return None
+
+
+def fetch_service_nationalities(service_id):
+    """جلب مجموعات الموارد للخدمة وحفظها في ملف منفصل"""
+    try:
+        url = RESOURCEGROUPS_API.format(service_id)
+        resp = requests.get(url, timeout=10)
+
+        if resp.status_code == 200:
+            data = resp.json().get("data", [])
+
+            nat_data = {}
+            if os.path.exists(NATIONALITY_HOURLY_PATH):
+                with open(NATIONALITY_HOURLY_PATH, "r", encoding="utf-8") as f:
+                    try:
+                        nat_data = json.load(f)
+                    except json.JSONDecodeError:
+                        pass
+
+            nat_data[service_id] = {
+                "service_id": service_id,
+                "nationalities": data,
+                "last_updated": time.strftime("%Y-%m-%d %H:%M:%S")
+            }
+
+            with open(NATIONALITY_HOURLY_PATH, "w", encoding="utf-8") as f:
+                json.dump(nat_data, f, ensure_ascii=False, indent=2)
+            return data
+        else:
+            return None
+
+    except Exception as e:
         return None
 
 def is_other_option(sector_number, chosen_number):
