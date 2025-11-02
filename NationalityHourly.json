@@ -1,0 +1,28 @@
+{
+  "d7e30b92-61ec-ef11-88df-000d3ab06f75": {
+    "service_id": "d7e30b92-61ec-ef11-88df-000d3ab06f75",
+    "nationalities": [
+      {
+        "image": "https://erp.rnr.sa:8003/ResourceGroupsImages/{F8CA6B13-62EC-EF11-88DF-000D3AB06F75}{5EA06CB1-8497-F011-9190-E38B39ED237C}Indonesia.png",
+        "hasPackage": false,
+        "description": null,
+        "link": null,
+        "notes": null,
+        "actionType": 0,
+        "key": "f8ca6b13-62ec-ef11-88df-000d3ab06f75",
+        "value": "اندونيسيا"
+      },
+      {
+        "image": "https://erp.rnr.sa:8003/ResourceGroupsImages/{5B7E7302-262E-F011-891A-000D3AB06F75}Screenshot 2025-10-09 082737.png",
+        "hasPackage": false,
+        "description": null,
+        "link": null,
+        "notes": null,
+        "actionType": 0,
+        "key": "5b7e7302-262e-f011-891a-000d3ab06f75",
+        "value": "افريقيا"
+      }
+    ],
+    "last_updated": "2025-11-02 13:44:46"
+  }
+}

@@ -1,1 +1,17 @@
-{}
+{
+  "latitude": "24.714685",
+  "longitude": "46.681713",
+  "name": "سلمى",
+  "phone": "0506419970",
+  "contactId": "6cc0bb17-345c-4fb2-9821-3766fe9fca28",
+  "contact_id": "6cc0bb17-345c-4fb2-9821-3766fe9fca28",
+  "city": "الرياض",
+  "city_id": "629a2a15-14fa-e911-a81f-000d3abaded5",
+  "district": "الاسكان",
+  "district_id": "9faa6ed2-8420-ee11-9168-a9cd38b6ac61",
+  "housing_key": 0,
+  "housing_value": "فيلا",
+  "is_villa": true,
+  "houseNo": "٤٤",
+  "addressNotes": "بب"
+}

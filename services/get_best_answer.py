@@ -1,20 +1,51 @@
 import time
 import re
+import json
+import os
+import logging
 import google.generativeai as genai
+import requests
+
+from typing import Any, Dict, List
+
 from .check_text_safety import check_text_safety
 from .normalize_ar import normalize_ar
 from .tokens_from_text import tokens_from_text
 from .filter_answers_by_query import filter_answers_by_query
-from .fetch_services_from_api import fetch_services_from_api
-from .fetch_services_from_api import fetch_service_by_number
+from .fetch_services_from_api import (
+    fetch_services_from_api,
+    fetch_service_by_number,
+    is_other_option,
+)
 from .state import QUESTIONS, ANSWERS, TOKEN_SETS, NN_MODEL, EMBEDDER, TOP_K, COMBINED_THRESHOLD
 from .save_or_update_qa import save_or_update_qa
 from keyWords import SERVICSE_KEYWORDS
 from services.load_faq_data import load_faq_data
-from .fetch_services_from_api import is_other_option
-from .user_info_manager import collect_user_info, update_user_info, load_user_data, save_user_data, create_lead_hourly
-import json
-import requests
+from .user_info_manager import (
+    collect_user_info,
+    update_user_info,
+    load_user_data,
+    save_user_data,
+    create_lead_hourly,
+)
+from .user_info_manager import (
+    fetch_housing_types,
+    set_housing_selection,
+)
+from .save_fixed_package import (
+    save_fixed_package,
+    handle_nationality_selection,
+    handle_shift_selection,
+    get_available_shifts,
+    get_available_nationalities,
+    read_fixed_package,
+    FIXED_PACKAGE_PATH,
+)
+
+LOGGER = logging.getLogger(__name__)
+if not LOGGER.handlers:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
 CITY_API = "https://erp.rnr.sa:8005/ar/api/city/ActiveCities"
 CITYDISTRICT_API = "https://erp.rnr.sa:8005/ar/api/city/CityDistricts?cityId"
 def get_best_answer(user_input):
@@ -23,6 +54,75 @@ def get_best_answer(user_input):
     # نطبع نسخة مُطَبَّعة من السؤال مبكراً لاستخدامها في اكتشاف الخدمات
     normalized_q = normalize_ar(user_input)
 
+    # -----------------------
+    # معالجة اختيار نوع السكن عندما ننتظر هذا الحقل
+    # -----------------------
+    try:
+        if user_data.get("pending_field") == "housing":
+            ok, matched = set_housing_selection(user_input)
+            if ok and matched:
+                # إذا كان هناك إجراء معلق مثل 'services' نكمل كما كان بالسابق
+                ud = load_user_data()
+                ud["pending_field"] = "houseNo"
+                save_user_data(ud)
+                return f"✅ تم حفظ نوع المنزل: {matched.get('value')}\n\nالآن من فضلك أدخل رقم المنزل:"
+
+            else:
+                types = fetch_housing_types() or []
+                if not types:
+                    return "⚠️ حدث خطأ أثناء جلب أنواع السكن، حاول مرة أخرى لاحقاً."
+                # عرض الخيارات للمستخدم لكتابتها بنفس الصيغة
+                opts = " / ".join([t.get("value") for t in types])
+                return f"لم أفهم نوع السكن الذي أدخلته. اختر واحداً من الأنواع التالية:\n{opts}"
+    except Exception as e:
+        print(f"⚠️ خطأ أثناء معالجة اختيار السكن: {e}")
+        # 🔹 عندما يكون الحقل المطلوب رقم المنزل
+    if user_data.get("pending_field") == "houseNo":
+        update_user_info("houseNo", user_input)
+        ud = load_user_data()
+        ud["pending_field"] = "addressNotes"
+        save_user_data(ud)
+        return "تم حفظ رقم المنزل ✅\n\nالآن من فضلك أدخل أي تفاصيل إضافية عن العنوان (مثل مَعلم قريب أو وصف للمنزل):"
+
+# 🔹 عندما يكون الحقل المطلوب ملاحظات العنوان
+    if user_data.get("pending_field") == "addressNotes":
+        update_user_info("addressNotes", user_input)
+        ud = load_user_data()
+        ud.pop("pending_field", None)
+        save_user_data(ud)
+    # حفظ اللقطة محلياً في SaveAddrease.json
+        from .user_info_manager import save_address_snapshot
+        save_address_snapshot(ud)
+        # If we have a pending query (for example the user originally asked about services)
+        # resume that question and return its ANSWER (not echo the user's question).
+        prev_q = ud.get("pending_query")
+        pending_action = ud.get("pending_action")
+        if prev_q:
+            # clear pending flags to avoid loops and mark that we're resuming the flow
+            ud.pop("pending_action", None)
+            ud.pop("pending_query", None)
+            save_user_data(ud)
+
+            try:
+                # Call the same function to get the answer for the previous question.
+                # This will run the normal QA/service logic and return the answer text.
+                resumed_answer = get_best_answer(prev_q)
+            except Exception as e:
+                LOGGER.warning("⚠️ خطأ أثناء استئناف السؤال السابق: %s", e)
+                resumed_answer = None
+
+            if resumed_answer:
+                return f"✅ تم حفظ تفاصيل العنوان بنجاح! يمكنك المتابعة الآن.\n\n{resumed_answer}"
+            else:
+                # If resuming failed, fall back to a polite confirmation message
+                return "✅ تم حفظ تفاصيل العنوان بنجاح! يمكنك المتابعة الآن."
+
+        # Fallback generic message if there's no pending query
+        return "✅ تم حفظ تفاصيل العنوان بنجاح! يمكنك المتابعة الآن."
+
+    # =====================
+    # معالجة أسئلة عن الخدمات
+     
     # أولاً: إذا المستخدم يسأل عن الخدمات، نتحقق هل لدينا بياناته كاملة
     service_related = any(word in normalized_q for word in SERVICSE_KEYWORDS)
     if service_related:
@@ -129,19 +229,39 @@ def get_best_answer(user_input):
                             if matched_district:
                                 update_user_info("district", user_input.strip())
                                 update_user_info("district_id", matched_district["key"])  # حفظ id الحي
-                                msg, next_field = collect_user_info()
-                                if msg:
-                                    return msg
-                                else:
-                                    # بعد اكتمال البيانات بالكامل
+                                # بعد حفظ الحي، سنطلب من المستخدم اختيار نوع المنزل (فيلا/عمارة)
+                                try:
+                                    types = fetch_housing_types()
+                                    if not types:
+                                        # لو لم تُرجع الأنواع، نكمل كما كان
+                                        msg, next_field = collect_user_info()
+                                        if msg:
+                                            return msg
+                                        ud = load_user_data()
+                                        pending = ud.get("pending_action")
+                                        if pending == "services":
+                                            ud.pop("pending_action", None)
+                                            ud.pop("pending_query", None)
+                                            save_user_data(ud)
+                                            services_text = fetch_services_from_api()
+                                            return "✅ تم حفظ بياناتك بنجاح!\n\n" + services_text
+                                        return "✅ تم حفظ بياناتك بنجاح! يمكنك المتابعة الآن."
+
+                                    # حضِّر رسالة الخيارات للمستخدم
+                                    opts = " / ".join([t.get("value") for t in types])
                                     ud = load_user_data()
-                                    pending = ud.get("pending_action")
-                                    if pending == "services":
-                                        ud.pop("pending_action", None)
-                                        ud.pop("pending_query", None)
-                                        save_user_data(ud)
-                                        services_text = fetch_services_from_api()
-                                        return "✅ تم حفظ بياناتك بنجاح!\n\n" + services_text
+                                    ud["pending_field"] = "housing"
+                                    save_user_data(ud)
+                                    return (
+                                        "تم حفظ الحي بنجاح. الآن من فضلك أخبرني ما نوع المنزل: "
+                                        f"\nالخيارات: {opts}\n"
+                                        "اكتب اسم النوع كما هو (مثال: فيلا)"
+                                    )
+                                except Exception as e:
+                                    print(f"⚠️ خطأ أثناء جلب أنواع السكن بعد حفظ الحي: {e}")
+                                    msg, next_field = collect_user_info()
+                                    if msg:
+                                        return msg
                                     return "✅ تم حفظ بياناتك بنجاح! يمكنك المتابعة الآن."
                             else:
                                 return f"❌ الحي '{user_input}' غير متوفر حالياً في مدينتك، سيتم إضافته قريباً بإذن الله الرجاء اختيار حي اخر."
@@ -150,6 +270,28 @@ def get_best_answer(user_input):
                     except Exception as e:
                         print(f"⚠️ خطأ أثناء التحقق من الحي: {e}")
                         return "حدث خطأ أثناء الاتصال بخدمة الأحياء. حاول مرة أخرى لاحقاً."
+                    # بعد حفظ الحي بنجاح، نحاول توليد إحداثيات افتراضية
+                try:
+                    city_name = user_data.get("city")
+                    district_name = user_input.strip()
+    
+        # 🔹 مثال: توليد إحداثيات عشوائية ثابتة مؤقتاً (مكان API حقيقي لاحقاً)
+                    import random
+                    base_lat, base_lon = 24.7136, 46.6753  # مركز الرياض تقريباً
+                    latitude = round(base_lat + random.uniform(-0.01, 0.01), 6)
+                    longitude = round(base_lon + random.uniform(-0.01, 0.01), 6)
+    
+                    update_user_info("latitude", str(latitude))
+                    update_user_info("longitude", str(longitude))
+
+    # نحفظ اللقطة في SaveAddrease.json مباشرة
+                    from .user_info_manager import save_address_snapshot
+                    ud = load_user_data()
+                    save_address_snapshot(ud)
+
+                    print(f"✅ تم حفظ الإحداثيات: lat={latitude}, lon={longitude}")
+                except Exception as e:
+                    print(f"⚠️ فشل في توليد الإحداثيات: {e}")
 
                 # 🔹 الحقول العادية (الاسم، الهاتف)
                 else:
@@ -177,6 +319,28 @@ def get_best_answer(user_input):
     # نحول الأرقام العربية ثم نعوض الفاصل العربي "٫" إلى نقطة
     normalized_digits = normalized_digits.replace("٫", ".").replace(",", ".").replace(" ", "")
 
+    # التحقق من أن المدخل هو اختيار موعد (مثل A1 أو 1)
+    shift_match = re.fullmatch(r"\s*([12]|[A-Za-z][12])\s*$", user_input)
+    if shift_match:
+        choice = user_input.strip()
+        # نتأكد أن المستخدم اختار جنسية أولاً
+        pkg = read_fixed_package()
+        service_id = pkg.get("service_id")
+        nationality_key = pkg.get("nationality_key")
+
+        if service_id and nationality_key:
+            # جلب المواعيد المتاحة
+            try:
+                shifts = get_available_shifts(service_id)
+                if not shifts:
+                    return "⚠️ لا توجد مواعيد متاحة لهذه الخدمة حالياً."
+                return handle_shift_selection(choice, shifts)
+            except Exception as exc:
+                LOGGER.warning("⚠️ خطأ أثناء معالجة اختيار الموعد: %s", exc)
+                return "⚠️ حدث خطأ أثناء معالجة اختيار الموعد. حاول مرة أخرى لاحقاً."
+
+        # ليس لدينا خدمة أو جنسية محددة، نتعامل مع المدخل كاختيار خدمة عادي
+        
     #  حالة الاختيار بصيغة نقطية
     if re.fullmatch(r"\d+\.\d+", normalized_digits):
         print(f"🔢 تم اكتشاف اختيار رقمي بنقطة للخدمة: {user_input}")
@@ -212,6 +376,55 @@ def get_best_answer(user_input):
 
         # Otherwise return the service details for the chosen number
         return fetch_service_by_number(num)
+
+    # حالة اختيار الجنسية بحرف واحد (A, B, ...)
+    if re.fullmatch(r"\s*[A-Za-z]\s*$", user_input):
+        choice = user_input.strip().upper()
+        # نحاول تحميل الخدمة المختارة من FixedPackage.json
+        pkg = read_fixed_package()
+        service_id = pkg.get("service_id")
+        if not service_id:
+            return "⚠️ لا يوجد خدمة مختارة حالياً. من فضلك اختر خدمة أولاً ثم اختر الجنسية (A أو B)."
+
+        # جلب الجنسيات المتاحة (يحاول من API أو من الملف المحلي)
+        try:
+            nationalities = get_available_nationalities(service_id)
+        except Exception as exc:
+            LOGGER.warning("⚠️ خطأ أثناء جلب الجنسيات: %s", exc)
+            nationalities = None
+
+        if not nationalities:
+            return "⚠️ لا توجد جنسيات متاحة لهذه الخدمة حالياً أو حدث خطأ أثناء جلبها."
+
+        # حفظ اختيار الجنسية وإرجاع رسالة تأكيد
+        try:
+            return handle_nationality_selection(choice, nationalities)
+        except Exception as exc:
+            LOGGER.warning("⚠️ خطأ أثناء حفظ اختيار الجنسية: %s", exc)
+            return "⚠️ حدث خطأ أثناء معالجة اختيار الجنسية. حاول مرة أخرى لاحقاً."
+
+    # حالة اختيار الموعد برقم (1 أو 2) أو بحرف+رقم (مثل A1)
+    if re.fullmatch(r"\s*([12]|[A-Za-z][12])\s*$", user_input):
+        choice = user_input.strip()
+        pkg = read_fixed_package()
+        service_id = pkg.get("service_id")
+        nationality_key = pkg.get("nationality_key")
+
+        if not service_id:
+            return "⚠️ لا يوجد خدمة مختارة حالياً. من فضلك اختر خدمة أولاً."
+
+        if not nationality_key:
+            return "⚠️ لم يتم اختيار الجنسية بعد. من فضلك اختر الجنسية أولاً (A أو B)."
+
+        # جلب المواعيد المتاحة
+        try:
+            shifts = get_available_shifts(service_id)
+            if not shifts:
+                return "⚠️ لا توجد مواعيد متاحة لهذه الخدمة حالياً."
+            return handle_shift_selection(choice, shifts)
+        except Exception as exc:
+            LOGGER.warning("⚠️ خطأ أثناء معالجة اختيار الموعد: %s", exc)
+            return "⚠️ حدث خطأ أثناء معالجة اختيار الموعد. حاول مرة أخرى لاحقاً."
 
     original_text = user_input
     answer = ""
@@ -287,60 +500,6 @@ def get_best_answer(user_input):
                 print("⚠️ خطأ أثناء ترجمة الإجابات المفلترة:", e)
                 return filtered_answers
         return filtered_answers
-
-    # if "حي" in normalized_q or "احياء" in normalized_q or "العناوين" in normalized_q:
-    #     for topic in data:
-    #         if normalize_ar(topic.get("topic", "")) == "العناوين":
-    #             questions_list = topic.get("questions", [])
-    #             if not questions_list:
-    #                 break
-
-    #             cities = questions_list[0].get("answers", [])
-    #             city_text = " ".join(cities)
-    #             cities_cleaned = [
-    #                 c.strip().replace("،", "").replace(".", "")
-    #                 for c in city_text.split()
-    #                 if len(c.strip()) > 1
-    #             ]
-
-    #             for city in cities_cleaned:
-    #                 if normalize_ar(city) in normalized_q:
-    #                     for sub_topic in data:
-    #                         if normalize_ar(sub_topic.get("topic", "")) == f"العناوين {normalize_ar(city)}":
-    #                             areas = []
-    #                             for q in sub_topic.get("questions", []):
-    #                                 for ans in q.get("answers", []):
-    #                                     areas.extend(ans.replace("،", ",").split(","))
-    #                             areas = [a.strip() for a in areas if a.strip()]
-
-    #                             for area in areas:
-    #                                 if normalize_ar(area) in normalized_q:
-    #                                     return f"نعم، حي {area} موجود ✅"
-
-    #                             return (
-    #                                 f"الحي المطلوب غير موجود في {city} ❌\n"
-    #                                 f"هل ترغب أن أظهر لك الأحياء المتوفرة في {city}؟\n\n"
-    #                                 "اكتب اسم المدينة الآن وسأعرضها لك 👇"
-    #                             )
-
-    #             all_areas = []
-    #             for sub_topic in data:
-    #                 if normalize_ar(sub_topic.get("topic", "")).startswith("العناوين"):
-    #                     for q in sub_topic.get("questions", []):
-    #                         for ans in q.get("answers", []):
-    #                             all_areas.extend(ans.replace("،", ",").split(","))
-    #             all_areas = [a.strip() for a in all_areas if a.strip()]
-
-    #             for area in all_areas:
-    #                 if normalize_ar(area) in normalized_q:
-    #                     return f"نعم، حي {area} موجود ✅"
-
-    #             return (
-    #                 "الحي المطلوب غير موجود ❌\n"
-    #                 "من فضلك اختر المدينة لمعرفة الأحياء المتوفرة فيها 👇\n\n"
-    #                 "المدن المتاحة: الرياض، جدة، المدينة المنورة"
-    #             )
-
     t3 = time.time()
     if not QUESTIONS:
         answer = "لم أجد إجابة مناسبة حالياً. هل يمكنك توضيح سؤالك أكثر؟ او اذا اردت يمكنك التواصل مع خدمة العملاء لحل المشكلة ومراجعة سؤالك"

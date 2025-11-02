@@ -1,0 +1,18 @@
+{
+  "request": {
+    "contactId": "6cc0bb17-345c-4fb2-9821-3766fe9fca28",
+    "addressNotes": "بب",
+    "houseNo": "٤٤",
+    "houseType": "0",
+    "floorNo": "0",
+    "apartmentNo": "0",
+    "cityId": "629a2a15-14fa-e911-a81f-000d3abaded5",
+    "districtId": "9faa6ed2-8420-ee11-9168-a9cd38b6ac61",
+    "latitude": "24.714685",
+    "longitude": "46.681713",
+    "type": 2
+  },
+  "response": null,
+  "status_code": null,
+  "saved_at": "2025-11-02T13:37:31.633692Z"
+}

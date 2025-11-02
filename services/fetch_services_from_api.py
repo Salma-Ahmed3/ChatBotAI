@@ -4,6 +4,7 @@ import json
 import time
 import requests
 from .state import FAQ_PATH
+from .save_fixed_package import save_fixed_package, write_fixed_package
 
 SERVICE_API = "https://erp.rnr.sa:8016/api/content/Search/ar/mobileServicesSection?withchildren=true"
 SERVICES_DETAILS_API = "https://erp.rnr.sa:8005/ar/api/Service/ServicesForService?serviceType={}"
@@ -152,6 +153,23 @@ def fetch_service_by_number(number):
                 print(f"🔍 تم اختيار الخدمة {name} مع المعرف {service_id}")
                 # تأكيد حفظ بيانات الخدمة المختارة
                 save_service_data([item])
+                # جلب بيانات الخطوة الأولى حسب نوع القطاع (sector_idx)
+                try:
+                    first_step = fetch_first_step(service_id, sector_idx)
+                except Exception as _:
+                    first_step = None
+
+                first_step_message = ""
+                if first_step:
+                    try:
+                        if isinstance(first_step, dict) and "data" in first_step:
+                            first_step_message = f"\n\n🔎 تم جلب بيانات إضافية للخطوة الأولى ({len(first_step.get('data', []))} عناصر)."
+                        else:
+                            first_step_message = "\n\n🔎 تم جلب بيانات إضافية للخطوة الأولى."
+                    except Exception:
+                        first_step_message = "\n\n🔎 تم جلب بيانات إضافية للخطوة الأولى."
+
+                nationalities_message = save_fixed_package(item)
                 
                 # جلب وحفظ الفترات المتاحة للخدمة إذا كانت من القطاع 1 وحالتها نشطة
                 if sector_idx == 1 and action_type == 1 and service_id:  # نجلب الفترات فقط للخدمات النشطة في القطاع الأول
@@ -159,15 +177,28 @@ def fetch_service_by_number(number):
                     shifts = fetch_service_shifts(service_id)
                     if shifts:
                         print(f"📅 تم العثور على {len(shifts)} فترة متاحة للخدمة وتم حفظها")
+                    # جلب وحفظ مجموعات الموارد/الجنسيات للخدمة
                     nats = fetch_service_nationalities(service_id)
+                    if nats:
+                        print(f"🌍 تم حفظ {len(nats)} مجموعة موارد (جنسيات) للخدمة {name}")
 
                 #  المنطق الجديد حسب نوع الـ actionType
+                service_details = ""
                 if action_type == 1 and note:
-                    return f"📋 {name}\n\n{note.strip()}"
+                    service_details = f"📋 {name}\n\n{note.strip()}"
                 elif action_type == 2:
-                    return f" {name}\n\nالخدمة ستكون متاحة قريباً ⏳ \n  للاستكمال سيتم اجراء طلبك عن طريق الاسم و رقم الهاتف و المدينة و الحي التي قمت بارسالها مسبقاً \n اخبرني باجابة نعم للمتابعة او لا للالغاء \n شكراً لتفهمك"
+                    service_details = (
+                        f" {name}\n\nالخدمة ستكون متاحة قريباً ⏳ \n  للاستكمال سيتم اجراء طلبك عن طريق الاسم و رقم الهاتف و المدينة و الحي التي قمت بارسالها مسبقاً \n اخبرني باجابة نعم للمتابعة او لا للالغاء \n شكراً لتفهمك"
+                    )
                 else:
-                    return f"{name} : {desc.strip()}"
+                    service_details = f"{name} : {desc.strip()}"
+
+                # إذا كانت هناك رسالة وطناتية (ناتجة عن save_fixed_package) نلحقها
+                if isinstance(nationalities_message, str):
+                    separator = "\n\n" + "─" * 5 + "\n\n"
+                    return f"{service_details}{first_step_message}{separator}{nationalities_message}"
+
+                return f"{service_details}{first_step_message}"
 
             return f"⚠️ الرقم {sector_idx}.{sub_idx} غير متوفر. الرجاء اختيار رقم من الأرقام المعروضة."
         # معاملة الإدخال كرقم قطاع (مثل 1)
@@ -218,7 +249,10 @@ def fetch_service_by_number(number):
                     shifts = fetch_service_shifts(service_id)
                     if shifts:
                         print(f"📅 تم العثور على {len(shifts)} فترة متاحة للخدمة {name}")
+                    # جلب وحفظ مجموعات الموارد/الجنسيات للخدمة
                     nats = fetch_service_nationalities(service_id)
+                    if nats:
+                        print(f"🌍 تم حفظ {len(nats)} مجموعة موارد (جنسيات) للخدمة {name}")
                 print(f"💾 حفظ بيانات الخدمة {name} مع المعرف {service_id}")
                 sub_services.append(f"{idx}.{i}. {name} : {desc}")
 
@@ -260,6 +294,7 @@ def fetch_service_by_number(number):
                 notes = item.get("notes")
                 
                 sub_services.append(f"{idx}.{i}. {name} : {notes}")
+            sub_services.append(f"{idx}.{len(data) + 1}. أخرى")
 
             # حفظ بيانات الخدمات الفرعية داخل الـSERVICE_MAP
             service["sub_services_data"] = data
@@ -332,9 +367,10 @@ def fetch_service_shifts(service_id):
 
 
 def fetch_service_nationalities(service_id):
-    """جلب مجموعات الموارد للخدمة وحفظها في ملف منفصل"""
+    """جلب مجموعات الموارد (الجنسية/التركيبة) للخدمة وحفظها في ملف منفصل"""
     try:
         url = RESOURCEGROUPS_API.format(service_id)
+        print(f"📡 جلب مجموعات الموارد (الجنسيات) للخدمة {service_id} من {url}")
         resp = requests.get(url, timeout=10)
 
         if resp.status_code == 200:
@@ -356,11 +392,99 @@ def fetch_service_nationalities(service_id):
 
             with open(NATIONALITY_HOURLY_PATH, "w", encoding="utf-8") as f:
                 json.dump(nat_data, f, ensure_ascii=False, indent=2)
+
+            print(f"✅ تم حفظ مجموعات الموارد للخدمة {service_id} في {NATIONALITY_HOURLY_PATH}")
             return data
         else:
+            print(f"⚠️ خطأ في جلب مجموعات الموارد: {resp.status_code}")
             return None
 
     except Exception as e:
+        print(f"⚠️ خطأ أثناء جلب مجموعات الموارد: {e}")
+        return None
+
+
+def fetch_first_step(service_id, sector_idx):
+    """جلب بيانات الخطوة الأولى من API Steps/FirstStep.
+
+    قواعد:
+    - إذا كان القطاع 1: استخدم serviceType=2 ومرر Object JSON يحتوي ServiceId, SelectedPricingId=null, FromOffer=false
+    - إذا كان القطاع 2: استخدم serviceType=1 فقط (بدون Object)
+    نتائج الاستدعاء تُحفظ داخل `ServiceForService.json` تحت مفتاح الخدمة لتسهيل الاستخدام لاحقاً.
+    """
+    try:
+        url = "https://erp.rnr.sa:8005/ar/api/Steps/FirstStep"
+
+        if not service_id and sector_idx != 2:
+            print("⚠️ لا يوجد معرّف خدمة صالح لجلب FirstStep.")
+            return None
+
+        if sector_idx == 1:
+            service_type = 2
+            obj = {"ServiceId": service_id, "SelectedPricingId": None, "FromOffer": False}
+            params = {"serviceType": str(service_type), "Object": json.dumps(obj, ensure_ascii=False)}
+        elif sector_idx == 2:
+            service_type = 1
+            params = {"serviceType": str(service_type)}
+        else:
+            # لا ندعم أنواع أخرى حالياً
+            return None
+
+        print(f"📡 جلب FirstStep: {url} params={params}")
+        resp = requests.get(url, params=params, timeout=10)
+        if resp.status_code == 200:
+            result = resp.json()
+
+            # حفظ النتيجة في ملف ServiceForService.json تحت مفتاح الخدمة
+            try:
+                service_file = {}
+                if os.path.exists(SERVICE_FOR_SERVICE_PATH):
+                    with open(SERVICE_FOR_SERVICE_PATH, "r", encoding="utf-8") as f:
+                        try:
+                            service_file = json.load(f)
+                        except json.JSONDecodeError:
+                            service_file = {}
+
+                if service_id:
+                    entry = service_file.get(service_id, {})
+                    entry["first_step"] = result
+                    service_file[service_id] = entry
+                    with open(SERVICE_FOR_SERVICE_PATH, "w", encoding="utf-8") as f:
+                        json.dump(service_file, f, ensure_ascii=False, indent=2)
+                    print(f"✅ تم حفظ FirstStep للخدمة {service_id} في {SERVICE_FOR_SERVICE_PATH}")
+
+                # حاول استخراج stepId وحفظه في FixedPackage.json
+                try:
+                    step_id = None
+                    # بعض الـ APIs تعيد stepId مباشرة في الجذر أو داخل data
+                    if isinstance(result, dict):
+                        # شائع: result['data']['stepId'] أو result['data']['StepId']
+                        data_node = result.get("data") if isinstance(result.get("data"), (dict, list)) else result.get("data")
+                        if isinstance(result.get("data"), dict):
+                            step_id = result["data"].get("stepId") or result["data"].get("StepId")
+                        # أحياناً يكون في الجذر
+                        if not step_id:
+                            step_id = result.get("stepId") or result.get("StepId")
+
+                    if step_id:
+                        # استخدم ال-write helper لدمج الحقل دون مسح الباقي
+                        if write_fixed_package({"stepId": step_id}):
+                            print(f"✅ تم حفظ stepId={step_id} في FixedPackage.json")
+                        else:
+                            print("⚠️ فشل في حفظ stepId في FixedPackage.json")
+                except Exception as e:
+                    print(f"⚠️ خطأ أثناء استخراج/حفظ stepId: {e}")
+
+            except Exception as e:
+                print(f"⚠️ خطأ في حفظ FirstStep: {e}")
+
+            return result
+        else:
+            print(f"⚠️ خطأ في جلب FirstStep: {resp.status_code} {resp.text}")
+            return None
+
+    except Exception as e:
+        print(f"⚠️ خطأ أثناء جلب FirstStep: {e}")
         return None
 
 def is_other_option(sector_number, chosen_number):
