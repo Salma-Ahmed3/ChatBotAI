@@ -10,7 +10,7 @@ from typing import Any
 
 from app_pkg.logger import setup_logger
 from app_pkg.errors import InvalidInputError, ResourceNotFoundError
-from config import FAQ_PATH, SERVICE_FOR_SERVICE_PATH, HOURLY_SERVICES_SHIFT_PATH
+from config import FAQ_PATH, SERVICE_FOR_SERVICE_PATH, HOURLY_SERVICES_SHIFT_PATH , USER_DATA_PATH , SESSION_HISTORY_PATH
 from services.get_best_answer import get_best_answer
 from services.pretty_log_question_answer import pretty_log_question_answer
 from services.state import get_session_history, clear_session_history
@@ -152,7 +152,9 @@ def clear_history() -> Any:
 
         files_to_clear = [
             SERVICE_FOR_SERVICE_PATH,
-            HOURLY_SERVICES_SHIFT_PATH
+            HOURLY_SERVICES_SHIFT_PATH,
+            USER_DATA_PATH,
+            SESSION_HISTORY_PATH,
         ]
         
         cleared = []
