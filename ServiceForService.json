@@ -1,1 +1,48 @@
-{}
+{
+  "d7e30b92-61ec-ef11-88df-000d3ab06f75": {
+    "id": "d7e30b92-61ec-ef11-88df-000d3ab06f75",
+    "name": "تنظيف 🧹",
+    "description": "من 08:00 صباحا حتى 12:00 مساء\nومن 04:00 مساء حتى 08:00 مساء",
+    "iconUrl": "https://erp.rnr.sa:8003/ServiceImages/{D7E30B92-61EC-EF11-88DF-000D3AB06F75}التنظيف.jpeg",
+    "serviceBackImageUrl": "https://erp.rnr.sa:8003/ServiceBakgroundImages/{D7E30B92-61EC-EF11-88DF-000D3AB06F75}التنظيف.jpeg",
+    "serviceNote": "هذة الخدمة للعائلات فقط!!\nوفى حالة عدم وجود سيدة بالمنزل نعتذر عن تقديم الخدمة.\n(على العميل توفير ادوات النظافة)",
+    "link": null,
+    "actionType": 1,
+    "first_step": {
+      "data": {
+        "stepHeaderId": "6eb2df19-1cba-4c94-a53f-04faf0e4ba9c",
+        "stepOrder": null,
+        "dbResourceName": null,
+        "dbResourceFieldName": "AddNewAddress",
+        "isAvailable": true,
+        "isAuthorized": false,
+        "name": "AddNewAddress",
+        "controller": "HourlyContract",
+        "action": "AddNewAddress",
+        "iconClass": null,
+        "previousStepAction": null,
+        "nextStepAction": "FixedPackage",
+        "stepKeyword": "Address",
+        "description": "Detrmine Address on map",
+        "stepType": 2,
+        "isVisible": true,
+        "stepId": "3557649b-ad0b-4a67-ab15-0203b71c690b",
+        "httpMethod": "Post"
+      },
+      "status": 200,
+      "code": null,
+      "message": null,
+      "location": null
+    }
+  },
+  "9c665589-0ff1-ef11-88e1-000d3ab06f75": {
+    "id": "9c665589-0ff1-ef11-88e1-000d3ab06f75",
+    "name": "تنظيف عميق💫",
+    "description": "خدمة النظافة المنزلية مع الادوات لنظافه الحمامات والمطابخ والكنب",
+    "iconUrl": "https://erp.rnr.sa:8003/ServiceImages/{9C665589-0FF1-EF11-88E1-000D3AB06F75}العميق.jpeg",
+    "serviceBackImageUrl": "https://erp.rnr.sa:8003/ServiceBakgroundImages/{9C665589-0FF1-EF11-88E1-000D3AB06F75}العميق.jpeg",
+    "serviceNote": "قريـــــــبا",
+    "link": null,
+    "actionType": 2
+  }
+}

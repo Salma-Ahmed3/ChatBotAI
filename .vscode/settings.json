@@ -1,5 +1,6 @@
 {
     "python.analysis.extraPaths": [
-        "./services/genai_"
+        "./services/genai_",
+        "./services"
     ]
 }

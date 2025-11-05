@@ -15,6 +15,8 @@ USER_STATE_PATH = os.path.join(BASE_DIR, "user_state.json")
 SESSION_HISTORY_PATH = os.path.join(BASE_DIR, "session_history.json")
 SERVICE_FOR_SERVICE_PATH = os.path.join(BASE_DIR, "ServiceForService.json")
 HOURLY_SERVICES_SHIFT_PATH = os.path.join(BASE_DIR, "HourlyServicesShift.json")
+SAVE_ADDRESS_PATH = os.path.join(BASE_DIR, "SaveAddrease.json")
+FIXED_PACKAGE_PATH = os.path.join(BASE_DIR, "fixedPackage.json")
 
 # Flask configuration
 class Config:

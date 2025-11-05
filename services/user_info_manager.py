@@ -3,10 +3,25 @@ import os
 import requests
 import uuid
 import datetime
+import secrets  # توليد رموز عشوائية آمنة
+
 USER_DATA_PATH = os.path.join(os.path.dirname(__file__), "..", "user_data.json")
 HOURLYLEAD_API = "https://erp.rnr.sa:8005/ar/api/Lead/CreateHourly"
-ADD_ADDRESS_API = "https://erp.rnr.sa:8005/ar/api/HourlyContract/AddNewAddress"
 HOUSING_API = "https://erp.rnr.sa:8005/ar/api/ContactAddress/HousingTypes"
+
+# New: build ADD_ADDRESS_API dynamically from fixedPackage.json
+FIXED_PACKAGE_PATH = os.path.join(os.path.dirname(__file__), "..", "fixedPackage.json")
+
+def _load_fixed_package():
+    try:
+        with open(FIXED_PACKAGE_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+_fp = _load_fixed_package()
+_service_id = _fp.get("service_id") or _fp.get("serviceId") 
+_step_id = _fp.get("stepId") or _fp.get("step_id") 
 
 def load_user_data():
     """تحميل بيانات المستخدم من الملف"""
@@ -75,9 +90,6 @@ def fetch_housing_types():
 
 
 def set_housing_selection(value):
-    """حاول مطابقة قيمة نوع السكن (مثل 'فيلا' أو 'عمارة') مع بيانات الـ API وحفظ المفتاح والقيمة في user_data.
-    ترجع tuple (ok: bool, matched_item_or_none)
-    """
     user_data = load_user_data()
     if not value:
         return False, None
@@ -85,39 +97,23 @@ def set_housing_selection(value):
     types = fetch_housing_types() or []
     matched = next((t for t in types if str(t.get("value", "")).strip() == v), None)
     if not matched:
-        # حاول المطابقة بدون تشكيل أو بتحويل أرقام/فراغات
         matched = next((t for t in types if t.get("value", "").strip().lower() == v.lower()), None)
-
     if matched:
-        # حفظ المفتاح والقيمة
         user_data["housing_key"] = matched.get("key")
         user_data["housing_value"] = matched.get("value")
-        # علامة خاصة إذا كانت فيلا
-        try:
-            if str(matched.get("value", "")).strip() == "فيلا":
-                user_data["is_villa"] = True
-            else:
-                user_data.pop("is_villa", None)
-        except Exception:
-            pass
-
-        # إزالة أي حقل معلق متعلق بالسكن
+        if str(matched.get("value", "")).strip() == "فيلا":
+            user_data["is_villa"] = True
+        else:
+            user_data.pop("is_villa", None)
         if user_data.get("pending_field") == "housing":
             user_data.pop("pending_field", None)
-
         save_user_data(user_data)
-
-        # قم بحفظ لقطة محلية من بيانات العنوان في SaveAddrease.json حتى لو لم نرسل الطلب بعد
         try:
             save_address_snapshot(user_data)
         except Exception:
-            # لا نمنع العملية إذا فشل الحفظ المحلي
             pass
-
         return True, matched
-
     return False, None
-
 
 def create_lead_hourly(pending_query=None, description=None):
     """ارسال بيانات المستخدم إلى API الخاص بإنشاء Lead بنظام hourly.
@@ -172,99 +168,181 @@ def create_lead_hourly(pending_query=None, description=None):
     except Exception as e:
         return False, f"حدث خطأ أثناء إرسال الطلب: {e}", None
 
+# إضافة دالة لبناء الـ URL في وقت التشغيل
+def _build_add_address_api():
+    fp = _load_fixed_package()
+    service_id = fp.get("service_id") or fp.get("serviceId") or ""
+    step_id = fp.get("stepId") or fp.get("step_id") or ""
+    base = "https://erp.rnr.sa:8005/ar/api/HourlyContract/AddNewAddress"
+    return f"{base}?hourlyServiceId={service_id}&stepId={step_id}"
 
-def add_new_address(hourlyServiceId: str, stepId: str):
-    """Send address data (taken from user_data.json) to the AddNewAddress API.
+# --- new: generate a bearer-like token for testing (or reuse saved one) ---
+def _generate_bearer_token():
+    """Generates a long random token string and returns 'bearer <token>'.
 
-    The URL format used by the API is:
-      ADD_ADDRESS_API + "?hourlyServiceId={hourlyServiceId}&stepId={stepId}"
-
-    The function will:
-    - build the request body from available fields in user_data
-    - POST to the API
-    - save the same body into the user's data file
-    - write a file SaveAddrease.json next to the project root containing the request and the API response
-
-    Returns: (ok: bool, resp_json_or_message, sent_body_or_none)
+    Uses secrets.token_urlsafe to create a URL-safe long random string.
     """
-    try:
-        user_data = load_user_data()
+    # length parameter: control entropy; token_urlsafe(n) yields ~ceil(n*4/3) chars
+    token = secrets.token_urlsafe(384)  # produce a long token similar to example
+    return "bearer " + token
 
-        contact_id = user_data.get("contactId") or user_data.get("contact_id")
-
-        body = {
-            "contactId": contact_id,
-            "addressNotes": user_data.get("addressNotes") or user_data.get("address_notes") or "",
-            "houseNo": user_data.get("houseNo") or user_data.get("house_no") or "",
-            # houseType is expected as a key string/number - use saved housing_key if exists
-            "houseType": str(user_data.get("housing_key")) if user_data.get("housing_key") is not None else (str(user_data.get("houseType")) if user_data.get("houseType") is not None else "0"),
-            "floorNo": user_data.get("floorNo") or user_data.get("floor_no") or "0",
-            "apartmentNo": user_data.get("apartmentNo") or user_data.get("apartment_no") or "0",
-            "cityId": user_data.get("city_id") or user_data.get("cityId") or None,
-            "districtId": user_data.get("district_id") or user_data.get("districtId") or None,
-            "latitude": str(user_data.get("latitude") or ""),
-            "longitude": str(user_data.get("longitude") or ""),
-            # type in example is 2 (use same default)
-            "type": 2,
-        }
-
-        # Persist these fields into user_data for future reference
-        user_data.update({
-            "addressNotes": body["addressNotes"],
-            "houseNo": body["houseNo"],
-            "houseType": body["houseType"],
-            "floorNo": body["floorNo"],
-            "apartmentNo": body["apartmentNo"],
-        })
+def _ensure_auth_token_in_user_data():
+    """Return an Authorization header value or None.
+    Do NOT generate a new token. Normalize existing values (strip quotes,
+    ensure "bearer " prefix if raw token provided) and persist. If nothing
+    usable is found, return None so caller can omit the header.
+    """
+    user_data = load_user_data()
+    existing = user_data.get("auth_token")
+    if existing:
+        ex = str(existing).strip()
+        # remove surrounding quotes if present
+        if len(ex) >= 2 and ((ex[0] == '"' and ex[-1] == '"') or (ex[0] == "'" and ex[-1] == "'")):
+            ex = ex[1:-1].strip()
+        if not ex:
+            return None
+        if ex.lower().startswith("bearer "):
+            # keep normalized form
+            user_data["auth_token"] = ex
+            save_user_data(user_data)
+            return ex
+        # raw token -> prefix and persist
+        bearer = "bearer " + ex
+        user_data["auth_token"] = bearer
         save_user_data(user_data)
+        return bearer
 
-        # Build URL with query params
-        url = f"{ADD_ADDRESS_API}?hourlyServiceId={hourlyServiceId}&stepId={stepId}"
-        headers = {"Content-Type": "application/json"}
+    # try to read Authorization from existing SaveAddrease.json (if someone wrote it)
+    try:
+        save_path = os.path.join(os.path.dirname(__file__), "..", "SaveAddrease.json")
+        if os.path.exists(save_path):
+            with open(save_path, "r", encoding="utf-8") as f:
+                try:
+                    payload = json.load(f)
+                    if isinstance(payload, dict):
+                        headers = payload.get("headers") or {}
+                        auth_from_file = headers.get("Authorization") or headers.get("authorization")
+                        if auth_from_file:
+                            auth_from_file = str(auth_from_file).strip()
+                            if len(auth_from_file) >= 2 and ((auth_from_file[0] == '"' and auth_from_file[-1] == '"') or (auth_from_file[0] == "'" and auth_from_file[-1] == "'")):
+                                auth_from_file = auth_from_file[1:-1].strip()
+                            if not auth_from_file:
+                                return None
+                            if auth_from_file.lower().startswith("bearer "):
+                                user_data["auth_token"] = auth_from_file
+                                save_user_data(user_data)
+                                return auth_from_file
+                            else:
+                                bearer_val = "bearer " + auth_from_file
+                                user_data["auth_token"] = bearer_val
+                                save_user_data(user_data)
+                                return bearer_val
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # Do not generate a token; caller must omit Authorization if None
+    return None
+
+def send_address_to_api(body):
+    """
+    يرسل العنوان إلى السيرفر ويطبع URL, BODY, HEADERS, STATUS, RESPONSE منسقاً.
+    يعيد: (status_code, resp_json, url, headers)
+    """
+    url = _build_add_address_api()
+    try:
+        auth_header = _ensure_auth_token_in_user_data()
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/plain, */*",
+            "platform": "android",
+            "version": "7.0.0",
+            "source": "1",
+        }
+        # only include Authorization if we have a non-empty token
+        if auth_header:
+            headers["Authorization"] = auth_header
+
+        user_data = load_user_data()
+        if user_data.get("firebaseDeviceId"):
+            headers["firebaseDeviceId"] = user_data.get("firebaseDeviceId")
+        if user_data.get("playerId"):
+            headers["playerId"] = user_data.get("playerId")
+        if user_data.get("isOutSA") is not None:
+            headers["isOutSA"] = str(user_data.get("isOutSA")).lower()
+
+        # طباعة واضحة ومنسقة
+        print("┌─ Request to AddNewAddress")
+        print("│ URL: " + url)
+        try:
+            print("│ BODY:\n" + json.dumps(body, ensure_ascii=False, indent=2))
+        except Exception:
+            print("│ BODY: (unable to pretty-print) -", body)
+        try:
+            # indicate whether Authorization is being sent
+            headers_print = dict(headers)
+            if "Authorization" not in headers_print:
+                headers_print["Authorization"] = "(omitted)"
+            print("│ HEADERS:\n" + json.dumps(headers_print, ensure_ascii=False, indent=2))
+        except Exception:
+            print("│ HEADERS: (unable to pretty-print) -", headers)
+        print("└" + "─" * 40)
 
         resp = requests.post(url, json=body, headers=headers, timeout=15)
 
         try:
             resp_json = resp.json()
         except Exception:
-            resp_json = {"status_text": resp.text}
+            resp_json = {"raw_text": resp.text}
 
-
-        # Save request+response to SaveAddrease.json as valid JSON (url, body, response)
-        save_path = os.path.join(os.path.dirname(__file__), "..", "SaveAddrease.json")
+        # طباعة الحالة والرد بشكل منسق
+        print("┌─ Response")
+        print(f"│ Status: {resp.status_code}")
         try:
-            snapshot = {
-                "url": url,
-                "body": body,
-                "response": resp_json
-            }
-            with open(save_path, "w", encoding="utf-8") as f:
-                json.dump(snapshot, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            # If writing the file fails, continue but include warning in return message
-            return False, f"تم إرسال الطلب لكن فشل حفظ SaveAddrease.json: {e}", body
+            print("│ Response Body:\n" + json.dumps(resp_json, ensure_ascii=False, indent=2))
+        except Exception:
+            print("│ Response Body: (unable to pretty-print) -", resp_json)
+        print("└" + "─" * 40)
 
-        if resp.status_code == 200:
-            return True, resp_json, body
-        else:
-            return False, resp_json, body
-
+        return resp.status_code, resp_json, url, headers
     except Exception as e:
-        return False, f"حدث خطأ أثناء إرسال عنوان المستخدم: {e}", None
-
+        print("Error while sending request to:", url)
+        print("Exception:", str(e))
+        return None, {"error": str(e)}, url, {}
 
 def save_address_snapshot(user_data: dict, resp_json=None, status_code=None):
-    """Save a local snapshot file 'SaveAddrease.json' containing the address request body
-    and optional response/status. This runs locally and does not require calling the API.
+    """
+    يبني body من user_data، يرسلها إلى الـ API، ويحفظ
+    request/response/status_code/url/headers في SaveAddrease.json.
+    إذا كان في SaveAddrease.json contactId محدث، نفضّله على user_data.
     """
     try:
-        contact_id = user_data.get("contactId") or user_data.get("contact_id")
+        # إذا كان في SaveAddrease.json contactId محدث، نفضّله على user_data
+        save_path = os.path.join(os.path.dirname(__file__), "..", "SaveAddrease.json")
+        try:
+            if os.path.exists(save_path):
+                with open(save_path, "r", encoding="utf-8") as sf:
+                    existing_payload = json.load(sf) or {}
+                    req_sec = existing_payload.get("request") or {}
+                    file_contact = req_sec.get("contactId")
+                    if file_contact:
+                        # نستخدم قيمة contactId من الملف إن وُجدت وصالحة (غير فارغة)
+                        user_data = dict(user_data)  # shallow copy to avoid mutating caller
+                        user_data["contactId"] = file_contact
+                        user_data["contact_id"] = file_contact
+        except Exception:
+            # إذا فشل قراءة الملف نتجاهل ونتابع مع user_data كما هو
+            pass
 
+        contact_id = user_data.get("contactId") or user_data.get("contact_id")
         body = {
             "contactId": contact_id,
             "addressNotes": user_data.get("addressNotes") or user_data.get("address_notes") or "",
             "houseNo": user_data.get("houseNo") or user_data.get("house_no") or "",
-            "houseType": str(user_data.get("housing_key")) if user_data.get("housing_key") is not None else (str(user_data.get("houseType")) if user_data.get("houseType") is not None else "0"),
+            "houseType": str(user_data.get("housing_key"))
+            if user_data.get("housing_key") is not None
+            else (str(user_data.get("houseType")) if user_data.get("houseType") is not None else "0"),
             "floorNo": user_data.get("floorNo") or user_data.get("floor_no") or "0",
             "apartmentNo": user_data.get("apartmentNo") or user_data.get("apartment_no") or "0",
             "cityId": user_data.get("city_id") or user_data.get("cityId") or None,
@@ -274,24 +352,37 @@ def save_address_snapshot(user_data: dict, resp_json=None, status_code=None):
             "type": 2,
         }
 
-        save_path = os.path.join(os.path.dirname(__file__), "..", "SaveAddrease.json")
+        # إرسال فعلي للـ API — ترجع أيضًا الـ URL المستخدم و headers
+        status_code, resp_json, url, used_headers = send_address_to_api(body)
+
         payload = {
             "request": body,
             "response": resp_json,
             "status_code": status_code,
             "saved_at": datetime.datetime.utcnow().isoformat() + "Z",
+            "url": url,
+            "headers": used_headers,  # حفظ الـ headers التي استخدمت أثناء الطلب
         }
 
-        with open(save_path, "w", encoding="utf-8") as f:
+        # كتابة آمنة (atomic replace)
+        tmp_path = save_path + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
+        try:
+            os.replace(tmp_path, save_path)
+        except Exception:
+            # إذا فشل الاستبدال استخدم كتابة مباشرة كاحتياط
+            with open(save_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+
+        print(f"✅ تم إرسال العنوان وتخزين الرد في {save_path} (Status {status_code})")
+        try:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        except Exception:
+            print(payload)
         return True
     except Exception as e:
-        # Return False but don't raise so callers can continue
-        try:
-            # best-effort: try to write an error file next to snapshot
-            err_path = os.path.join(os.path.dirname(__file__), "..", "SaveAddrease_error.log")
-            with open(err_path, "a", encoding="utf-8") as ef:
-                ef.write(f"{datetime.datetime.utcnow().isoformat()} - save_address_snapshot error: {e}\n")
-        except Exception:
-            pass
+        err_path = os.path.join(os.path.dirname(__file__), "..", "SaveAddrease_error.log")
+        with open(err_path, "a", encoding="utf-8") as ef:
+            ef.write(f"{datetime.datetime.utcnow().isoformat()} - save_address_snapshot error: {e}\n")
         return False

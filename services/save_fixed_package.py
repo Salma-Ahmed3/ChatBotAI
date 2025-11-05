@@ -11,7 +11,6 @@ import os
 import time
 import requests
 import logging
-import urllib.parse
 
 LOGGER = logging.getLogger(__name__)
 LOG_FMT = "%(levelname)s: %(message)s"
@@ -238,103 +237,6 @@ def handle_nationality_selection(choice: str, nationalities: List[Dict[str, Any]
         return "⚠️ حدث خطأ في معالجة اختيار الجنسية"
 
 
-def get_fixed_package_info() -> Optional[Dict[str, Any]]:
-    """جلب معلومات الباقة من API بناءً على البيانات المحفوظة"""
-    try:
-        pkg = read_fixed_package()
-        # stepId is now expected to be stored in FixedPackage.json (pkg)
-        if not pkg:
-            LOGGER.warning("⚠️ البيانات المطلوبة غير متوفرة في FixedPackage.json")
-            return None
-
-        # Build a clean base URL and prepare params (take stepId from FixedPackage.json)
-        base_url = "https://erp.rnr.sa:8005/ar/api/HourlyContract/FixedPackage"
-        # accept either `stepId` or `step_id` stored in the package
-        step_id = pkg.get("stepId") or pkg.get("step_id")
-        params = {
-            "stepId": step_id,
-            "nationalityId": pkg.get("nationality_key"),
-            "shift": pkg.get("shift_key")
-        }
-
-        # Filter out None values so we don't send empty params
-        params_filtered = {k: v for k, v in params.items() if v is not None}
-        # Build full URL with query string as requested (parameters embedded in URL)
-        full_url = base_url + ("?" + urllib.parse.urlencode(params_filtered) if params_filtered else "")
-        LOGGER.info("📡 جلب معلومات الباقة... URL=%s", full_url)
-        response = requests.get(full_url, timeout=10)
-
-        if response.status_code == 200:
-            try:
-                body = response.json()
-            except Exception as exc:
-                LOGGER.warning("⚠️ تعذر فك JSON من استجابة الباقة: %s", exc)
-                LOGGER.debug("response.text: %s", getattr(response, "text", ""))
-                return None
-
-            selected = body.get("data", {}).get("selectedPackages") or []
-            if not selected:
-                LOGGER.info("ℹ️ لا توجد selectedPackages في الاستجابة: %s", getattr(response, "text", ""))
-                return None
-            # Return first selected package safely
-            return selected[0]
-        # If the first attempt failed, log and try a raw (non-urlencoded) querystring
-        LOGGER.warning("⚠️ خطأ في جلب معلومات الباقة (محاولة أولى): %s - %s", response.status_code, getattr(response, "text", ""))
-
-        try:
-            # Build a raw URL without additional encoding to match servers that
-            # expect unencoded query values (match the example you provided).
-            raw_step = pkg.get("stepId") or pkg.get("step_id")
-            raw_params = {
-                "stepId": raw_step,
-                "nationalityId": pkg.get("nationality_key"),
-                "shift": pkg.get("shift_key")
-            }
-            raw_query = "&".join(f"{k}={v}" for k, v in raw_params.items() if v is not None)
-            raw_url = base_url + ("?" + raw_query if raw_query else "")
-            LOGGER.info("📡 محاولة ثانية - استخدام URL غير مشفر: %s", raw_url)
-            response2 = requests.get(raw_url, timeout=10)
-
-            if response2.status_code == 200:
-                try:
-                    body2 = response2.json()
-                except Exception as exc:
-                    LOGGER.warning("⚠️ تعذر فك JSON من استجابة الباقة (المحاولة الثانية): %s", exc)
-                    LOGGER.debug("response2.text: %s", getattr(response2, "text", ""))
-                    return None
-
-                selected2 = body2.get("data", {}).get("selectedPackages") or []
-                if not selected2:
-                    LOGGER.info("ℹ️ لا توجد selectedPackages في الاستجابة (المحاولة الثانية): %s", getattr(response2, "text", ""))
-                    return None
-                return selected2[0]
-
-            LOGGER.warning("⚠️ خطأ في جلب معلومات الباقة (المحاولة الثانية): %s - %s", response2.status_code, getattr(response2, "text", ""))
-        except Exception as exc:
-            LOGGER.warning("⚠️ خطأ أثناء المحاولة الثانية لجلب معلومات الباقة: %s", exc)
-
-        return None
-    except Exception as exc:
-        LOGGER.warning("⚠️ خطأ في جلب معلومات الباقة: %s", exc)
-        return None
-
-
-def format_package_info(package: Dict[str, Any], shift_value: str) -> str:
-    """تنسيق معلومات الباقة في رسالة نصية"""
-    info = [
-        f"✅ تم اختيار الموعد: {shift_value}",
-        "──────────────",
-        "📦 تفاصيل الباقة:",
-        "",
-        f"🏷️ {package.get('displayName', '---')}",
-        f"🌍 الجنسية: {package.get('resourceGroupName', '---')}",
-        f"👥 {package.get('employeeNumberName', '---')}",
-        f"📅 {package.get('weeklyVisitName', '---')}",
-        f"⏱️ {package.get('contractDurationName', '---')}",
-        f"🕒 {package.get('visitShiftName', '---')}",
-        f"ℹ️ {package.get('promotionCodeDescription', '---')}"
-    ]
-    return "\n".join(info)
 
 
 def handle_shift_selection(choice: str, shifts: List[Dict[str, Any]]) -> str:
@@ -371,12 +273,16 @@ def handle_shift_selection(choice: str, shifts: List[Dict[str, Any]]) -> str:
         shift_value = selected_shift.get("value")
 
         if save_shift_to_package(shift_key, shift_value):
-            package_info = get_fixed_package_info()
-            if package_info:
-                return format_package_info(package_info, shift_value)
-            # package_info is missing; return a clean success message and log for debug
-            LOGGER.info("ℹ️ تم حفظ الموعد '%s' ولكن لم يتم العثور على تفاصيل الباقة (package_info is None).", shift_value)
-            return f"✅ تم اختيار الموعد: {shift_value}\n\nℹ️ لا توجد تفاصيل الباقة المتاحة حالياً."
+            # بعد حفظ الموعد: استدعاء API إضافة العنوان وطباعه النتيجة
+            try:
+                from .user_info_manager import load_user_data, save_address_snapshot
+
+                user_data = load_user_data()
+                result = save_address_snapshot(user_data)
+                print(f"Called ADD_ADDRESS_API, result: {result}")
+            except Exception as e:
+                print(f"Error calling ADD_ADDRESS_API: {e}")
+            return f"✅ تم اختيار الموعد: {shift_value}"
         else:
             return "⚠️ حدث خطأ في حفظ الموعد المختار"
     except Exception as exc:

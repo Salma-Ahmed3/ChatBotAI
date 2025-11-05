@@ -1,1 +1,18 @@
-{}
+{
+  "d7e30b92-61ec-ef11-88df-000d3ab06f75": {
+    "service_id": "d7e30b92-61ec-ef11-88df-000d3ab06f75",
+    "shifts": [
+      {
+        "key": 1,
+        "value": "صباحي",
+        "image": "https://erp.rnr.sa:8003/ShiftIcon/1.png"
+      },
+      {
+        "key": 2,
+        "value": "مسائي",
+        "image": "https://erp.rnr.sa:8003/ShiftIcon/2.png"
+      }
+    ],
+    "last_updated": "2025-11-05 11:30:19"
+  }
+}

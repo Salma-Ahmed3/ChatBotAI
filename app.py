@@ -12,6 +12,14 @@ logger = setup_logger(__name__)
 
 app = create_app()
 
+# Register auth_receiver blueprint so /save_auth runs with main app
+try:
+    # import the blueprint and register it
+    from auth_receiver import auth_bp
+    app.register_blueprint(auth_bp)
+except Exception as e:
+    logger.warning(f"Could not register auth_receiver blueprint: {e}")
+
 if __name__ == "__main__":
     logger.info("Starting ChatBotMobile application...")
     app.run(
