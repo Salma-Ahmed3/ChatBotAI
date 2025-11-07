@@ -1,4 +1,17 @@
 {
-  "pending_action": "services",
-  "pending_query": "خدمات"
+  "latitude": "24.713311",
+  "longitude": "46.668078",
+  "name": "سلمى",
+  "phone": "0506419970",
+  "contactId": "4b540e2c-50e5-4dba-8b34-76df218590ae",
+  "contact_id": "4b540e2c-50e5-4dba-8b34-76df218590ae",
+  "city": "الرياض",
+  "city_id": "629a2a15-14fa-e911-a81f-000d3abaded5",
+  "district": "الاسكان",
+  "district_id": "9faa6ed2-8420-ee11-9168-a9cd38b6ac61",
+  "housing_key": 0,
+  "housing_value": "فيلا",
+  "is_villa": true,
+  "houseNo": "٤٤",
+  "addressNotes": "تييست"
 }
