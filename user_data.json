@@ -1,18 +1,4 @@
 {
-  "auth_token": "bearer 3teQtFw6phVv98uWiSTC5NB8kwtP2yPDqrxCKtj_9z7sgH5F2gQfcJbKk2lkcMrRtKgiO6nUHtuUjDke2oGjtT7cH07_Y7VNt1bpQ5yN7FS6EtN5Lb6QdqWl9qPams0u8WUlBLoi9EIyU-1OMaEmhh1KItEVbR7pV7XCCYZfTDwiE594EGjbM7mdmXvG7GwMb9vS3tMjnTGLqgI0y59eSY1K2eKmgWn7cRbUfS6oWMzEf5fUvGjrhPKQQZ_hgvzr4cSyIf9qgzLlCGpBmtFFil5-UbJhHKc8O5zYPFJdZVRlv2vjB1WRAo45lkjAbDE-aIdP0X3GkT3R0CXd2WyYxLbCsNmHYzMyV3FI0Mbu468elpxknCGfcUsXLnepKcSXnQA5497eoGMmdxho-kQh4DQd9xqTS9kbxVFQ0uLXWZgkSAi0LGak6S5k7yKjzwF0vHq079IktD2tpuGxaZFvRDG6ojUMGBhObzw_ARv1yLQZ_Dpo6xnITohwqMSkqP0s9aT9BET9DOGZRzW17jCfWw",
-  "contactId": "1c4167f5-81c4-4edb-b538-95ba5d52e92e",
-  "contact_id": "1c4167f5-81c4-4edb-b538-95ba5d52e92e",
-  "latitude": "24.711815",
-  "longitude": "46.677048",
-  "name": "سلمى",
-  "phone": "0506419970",
-  "city": "الرياض",
-  "city_id": "629a2a15-14fa-e911-a81f-000d3abaded5",
-  "district": "الاسكان",
-  "district_id": "9faa6ed2-8420-ee11-9168-a9cd38b6ac61",
-  "housing_key": 0,
-  "housing_value": "فيلا",
-  "is_villa": true,
-  "houseNo": "٦٨",
-  "addressNotes": "٨٨"
+  "pending_action": "services",
+  "pending_query": "خدمات"
 }

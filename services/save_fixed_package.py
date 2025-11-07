@@ -17,7 +17,7 @@ LOG_FMT = "%(levelname)s: %(message)s"
 if not logging.getLogger().handlers:
     logging.basicConfig(level=logging.INFO, format=LOG_FMT)
 
-
+ 
 def _normalize_arabic_digits(s: str) -> str:
     """Normalize Arabic-Indic and Eastern Arabic-Indic digits to ASCII digits.
 

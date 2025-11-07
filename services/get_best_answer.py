@@ -125,6 +125,17 @@ def get_best_answer(user_input):
      
     # أولاً: إذا المستخدم يسأل عن الخدمات، نتحقق هل لدينا بياناته كاملة
     service_related = any(word in normalized_q for word in SERVICSE_KEYWORDS)
+    # إذا السؤال ليس عن الخدمات، جرب الإجابة من faq_data أولا
+    if not service_related:
+        try:
+            data = load_faq_data()
+            faq_answer = filter_answers_by_query(user_input, data)
+            if faq_answer:
+                return faq_answer
+        except Exception as e:
+            LOGGER.debug("⚠️ خطأ أثناء البحث في FAQ: %s", e)
+        # لم نعثر على إجابة في FAQ لأسئلة غير متعلقة بالخدمات -> نطلب إيضاح من المستخدم
+        return "لم افهم طلبك بالرجاء ارسال سؤالك بشكل اوضح"
     if service_related:
         print(f"🔍 تم اكتشاف سؤال عن الخدمات: {user_input}")
         # لو بيانات المستخدم ناقصة، نسجل أن هناك إجراء معلق ثم نطلب البيانات المطلوبة
@@ -172,7 +183,7 @@ def get_best_answer(user_input):
             # user canceled
             if normalized_no:
                 ud.pop("pending_action", None)
-                ud.pop("pending_query", None)
+                ud.pop("pending_query", None) 
                 save_user_data(ud)
                 return "✅ تم إلغاء إنشاء الطلب حسب طلبك. إذا رغبت في خدمات أخرى أبلغني." 
     except Exception as e:

@@ -114,7 +114,7 @@ def set_housing_selection(value):
             pass
         return True, matched
     return False, None
-
+ 
 def create_lead_hourly(pending_query=None, description=None):
     """ارسال بيانات المستخدم إلى API الخاص بإنشاء Lead بنظام hourly.
     ترجع (ok, response_message, sent_body).

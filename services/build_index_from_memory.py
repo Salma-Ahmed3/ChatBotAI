@@ -2,7 +2,7 @@ from .state import QUESTIONS, NN_MODEL, EMBEDDER, TOP_K
 
 
 def build_index_from_memory():
-    global NN_MODEL
+    global NN_MODEL 
     if not QUESTIONS:
         return
     embeddings = EMBEDDER.encode(QUESTIONS, show_progress_bar=False)

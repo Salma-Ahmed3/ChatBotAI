@@ -8,7 +8,7 @@ def check_text_safety(text):
         Analyze if this text contains any offensive content like:
         - Insults
         - Hate speech
-        - Profanity
+        - Profanity 
         - Threats
         - Inappropriate language
         
