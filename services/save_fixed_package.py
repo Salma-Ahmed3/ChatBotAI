@@ -30,8 +30,9 @@ def _normalize_arabic_digits(s: str) -> str:
     return s.translate(str.maketrans(trans))
 
 
-FIXED_PACKAGE_PATH = os.path.join(os.path.dirname(__file__), "..", "FixedPackage.json")
+FIXED_PACKAGE_PATH = os.path.join(os.path.dirname(__file__), "..", "fixedPackage.json")
 RESOURCEGROUPS_API = "https://erp.rnr.sa:8005/ar/api/ResourceGroup/GetResourceGroupsByService?serviceId={}"
+FIXED_PACKAGE_API = "https://erp.rnr.sa:8005/ar/api/HourlyContract/FixedPackage"
 
 
 def _read_json_file(path: str) -> Optional[Dict[str, Any]]:
@@ -81,6 +82,77 @@ def save_shift_to_package(shift_key: Any, shift_value: Any) -> bool:
     return write_fixed_package({"shift_key": shift_key, "shift_value": shift_value})
 
 
+def _save_snapshot_to_saveaddrease(package_data: Dict[str, Any]) -> bool:
+    """حفظ نسخة مبسطة في SaveAddrease.json تحتوي hourlyServiceId و stepId
+    نحتفظ أيضاً بـ headers أو contactId إذا وجدت في الملف الحالي.
+    """
+    try:
+        save_path = os.path.join(os.path.dirname(__file__), "..", "SaveAddrease.json")
+        existing = _read_json_file(save_path) or {}
+
+        # حافظ على headers إن وُجدت
+        headers = existing.get("headers") or {}
+
+        # حفظ/المحافظة على الحقول في request إن كانت موجودة (مثل contactId)
+        req = existing.get("request", {}) or {}
+        contact_from_file = req.get("contactId") or req.get("contact_id")
+        if contact_from_file:
+            req["contactId"] = contact_from_file
+
+        # ضع hourlyServiceId من package_data (ادعم مفاتيح بديلة) - لن نحفظه في 'request'
+        service_id = package_data.get("service_id") or package_data.get("serviceId") or package_data.get("id") or ""
+
+        # ضع stepId من package_data بدعم مفاتيح بديلة ("step", "step_id") - لن نحفظه في 'request'
+        step_id = (
+            package_data.get("stepId")
+            or package_data.get("step_id")
+            or package_data.get("step")
+            or ""
+        )
+
+        # Fallback: إن لم يُعثر على stepId في package_data حاول قراءته من fixedPackage.json الموحد
+        if not step_id:
+            try:
+                fp = _read_json_file(FIXED_PACKAGE_PATH) or {}
+                step_id = fp.get("stepId") or fp.get("step_id") or fp.get("step") or step_id
+            except Exception:
+                pass
+
+        # لا نضيف hourlyServiceId و stepId داخل الجسم (request). نترك 'req' كما هو
+        # (فقط نحافظ على contactId و الحقول الأخرى الموجودة مسبقاً)
+
+        # بنية بسيطة للملف تحاكي ما يحتاجه AddNewAddress (نحتفظ بالرد/حالة سابقة إن وُجدت)
+        payload = {
+            "request": req,
+            "response": existing.get("response"),
+            "status_code": existing.get("status_code"),
+            "saved_at": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "url": f"https://erp.rnr.sa:8005/ar/api/HourlyContract/AddNewAddress?hourlyServiceId={service_id}&stepId={step_id}",
+            "headers": headers,
+        }
+
+        # نكتب اللقطة الأولية فوراً
+        wrote = _write_json_file(save_path, payload)
+        if not wrote:
+            return False
+
+        # NEW: فور كتابة الـ URL نطلب إرسال العنوان مباشرة ليجلب الرد ويحدّث SaveAddrease.json
+        try:
+            from .user_info_manager import load_user_data, save_address_snapshot
+
+            user_data = load_user_data()
+            # save_address_snapshot سيبني الـ body من user_data ويرسل الطلب باستخدام الـ URL المبني
+            # ولن يضع hourlyServiceId/stepId في الـ body (تظهر في URL فقط)
+            save_address_snapshot(user_data)
+        except Exception as e:
+            LOGGER.warning("⚠️ خطأ عند محاولة إرسال العنوان فوراً: %s", e)
+
+        return True
+    except Exception as exc:
+        LOGGER.warning("⚠️ خطأ في حفظ SaveAddrease.json: %s", exc)
+        return False
+
+
 def save_fixed_package(service_data: Dict[str, Any]) -> Any:
     """حفظ بيانات الخدمة المختارة في ملف FixedPackage.json
 
@@ -102,6 +174,14 @@ def save_fixed_package(service_data: Dict[str, Any]) -> Any:
 
         if not write_fixed_package(package_data):
             return False
+
+        # NEW: بعد حفظ fixedPackage.json نحفظ أيضاً لقطة مبسطة في SaveAddrease.json
+        try:
+            saved = _save_snapshot_to_saveaddrease(package_data)
+            if saved:
+                LOGGER.info("✅ تم تحديث SaveAddrease.json بالـ hourlyServiceId و stepId")
+        except Exception as e:
+            LOGGER.warning("⚠️ فشل محاولة حفظ SaveAddrease.json: %s", e)
 
         # بعد حفظ الخدمة، نجلب الجنسيات المتاحة
         nationalities = get_available_nationalities(service_data.get("id"))
@@ -239,6 +319,66 @@ def handle_nationality_selection(choice: str, nationalities: List[Dict[str, Any]
 
 
 
+def call_fixed_package_api() -> Optional[List[Dict[str, Any]]]:
+    """استدعاء API للحصول على باقات FixedPackage باستخدام القيم من fixedPackage.json"""
+    try:
+        pkg = read_fixed_package()
+        step_id = pkg.get("stepId") or pkg.get("step_id") or pkg.get("step")
+        nationality_id = pkg.get("nationality_key") or pkg.get("nationalityId") or pkg.get("nationality_id")
+        shift = pkg.get("shift_key") or pkg.get("shift")
+
+        if not (step_id and nationality_id and shift is not None):
+            LOGGER.warning("⚠️ معطيات FixedPackage ناقصة للاتصال بـ FixedPackage API")
+            return None
+
+        params = {"stepId": step_id, "nationalityId": nationality_id, "shift": shift}
+        LOGGER.info("📡 استدعاء FixedPackage API مع params=%s", params)
+        resp = requests.get(FIXED_PACKAGE_API, params=params, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json().get("data", {})
+            return data.get("selectedPackages", [])
+        LOGGER.warning("⚠️ FixedPackage API أعاد حالة: %s", resp.status_code)
+        return None
+    except Exception as exc:
+        LOGGER.warning("⚠️ خطأ في استدعاء FixedPackage API: %s", exc)
+        return None
+
+
+def _pick_package_fields(pkg: Dict[str, Any]) -> Dict[str, Any]:
+    """انتقاء الحقول المطلوبة من كائن الباقة"""
+    return {
+        "displayName": pkg.get("displayName"),
+        "resourceGroupName": pkg.get("resourceGroupName"),
+        "employeeNumberName": pkg.get("employeeNumberName"),
+        "weeklyVisitName": pkg.get("weeklyVisitName"),
+        "contractDurationName": pkg.get("contractDurationName"),
+        "visitShiftName": pkg.get("visitShiftName"),
+        "timeSlotDisplayName": pkg.get("timeSlotDisplayName"),
+        "promotionCodeDescription": pkg.get("promotionCodeDescription"),
+        "packagePrice": pkg.get("packagePrice"),
+    }
+import google.generativeai as genai
+
+def format_packages_message(packages: List[Dict[str, Any]]) -> str:
+    """تنسيق رسالة تعرض الباقات المستخرجة من API"""
+    model = genai.GenerativeModel(model_name="models/gemini-2.5-pro")
+
+    if not packages:
+        return "⚠️ عذراً، لم يتم العثور على باقات متاحة."
+    parts = ["✅ تم جلب الباقات المتاحة:\n"]
+    for i, p in enumerate(packages, start=1):
+        info = _pick_package_fields(p)
+        parts.append(f"#{i} - {info.get('displayName') or 'بدون اسم'}")
+        parts.append(f"  • سعر الباقة: {info.get('packagePrice') if info.get('packagePrice') is not None else '-'}\n")
+        parts.append(f"  • مجموعة الموارد: {info.get('resourceGroupName') or '-'}")
+        parts.append(f"  • عدد الموظفين: {info.get('employeeNumberName') or '-'}")
+        parts.append(f"  • زيارات اسبوعية: {info.get('weeklyVisitName') or '-'}")
+        parts.append(f"  • مدة العقد: {info.get('contractDurationName') or '-'}")
+        parts.append(f"  • وردية الزيارة: {info.get('visitShiftName') or '-'}")
+        parts.append(f"  • الفاصل الزمني: {info.get('timeSlotDisplayName') or '-'}")
+        parts.append(f"  • رمز/وصف العرض: {info.get('promotionCodeDescription') or '-'}")
+    return "\n".join(parts)
+
 def handle_shift_selection(choice: str, shifts: List[Dict[str, Any]]) -> str:
     """معالجة اختيار الموعد وحفظه - يقبل الإدخال بشكل رقم فقط أو حرف+رقم مثل A1"""
     try:
@@ -273,16 +413,24 @@ def handle_shift_selection(choice: str, shifts: List[Dict[str, Any]]) -> str:
         shift_value = selected_shift.get("value")
 
         if save_shift_to_package(shift_key, shift_value):
-            # بعد حفظ الموعد: استدعاء API إضافة العنوان وطباعه النتيجة
+            # بعد حفظ الموعد: استدعاء API FixedPackage لجلب الباقات ثم طباعة النتيجة
             try:
-                from .user_info_manager import load_user_data, save_address_snapshot
+                # محاولة استدعاء API الباقات
+                packages = call_fixed_package_api()
+                packages_msg = format_packages_message(packages) if packages is not None else "⚠️ تعذر جلب بيانات الباقات."
+                # حاول أيضاً حفظ/إرسال العنوان كما كان سابقاً (إن أمكن)
+                try:
+                    from .user_info_manager import load_user_data, save_address_snapshot
+                    user_data = load_user_data()
+                    result = save_address_snapshot(user_data)
+                    LOGGER.info("Called ADD_ADDRESS_API, result: %s", result)
+                except Exception as e:
+                    LOGGER.warning("⚠️ خطأ عند استدعاء ADD_ADDRESS_API: %s", e)
 
-                user_data = load_user_data()
-                result = save_address_snapshot(user_data)
-                print(f"Called ADD_ADDRESS_API, result: {result}")
+                return f"✅ تم اختيار الموعد: {shift_value}\n\n{packages_msg}"
             except Exception as e:
-                print(f"Error calling ADD_ADDRESS_API: {e}")
-            return f"✅ تم اختيار الموعد: {shift_value}"
+                LOGGER.warning("⚠️ خطأ عند جلب الباقات: %s", e)
+                return f"✅ تم اختيار الموعد: {shift_value}\n\n⚠️ حدث خطأ في جلب بيانات الباقات"
         else:
             return "⚠️ حدث خطأ في حفظ الموعد المختار"
     except Exception as exc:
