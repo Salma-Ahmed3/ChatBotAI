@@ -344,10 +344,14 @@ def call_fixed_package_api() -> Optional[List[Dict[str, Any]]]:
         return None
 
 
+import google.generativeai as genai
+from typing import List, Dict, Any
+
 def _pick_package_fields(pkg: Dict[str, Any]) -> Dict[str, Any]:
     """انتقاء الحقول المطلوبة من كائن الباقة"""
     return {
         "displayName": pkg.get("displayName"),
+        "packagePrice": pkg.get("packagePrice"),
         "resourceGroupName": pkg.get("resourceGroupName"),
         "employeeNumberName": pkg.get("employeeNumberName"),
         "weeklyVisitName": pkg.get("weeklyVisitName"),
@@ -355,30 +359,44 @@ def _pick_package_fields(pkg: Dict[str, Any]) -> Dict[str, Any]:
         "visitShiftName": pkg.get("visitShiftName"),
         "timeSlotDisplayName": pkg.get("timeSlotDisplayName"),
         "promotionCodeDescription": pkg.get("promotionCodeDescription"),
-        "packagePrice": pkg.get("packagePrice"),
     }
-import google.generativeai as genai
+
 
 def format_packages_message(packages: List[Dict[str, Any]]) -> str:
-    """تنسيق رسالة تعرض الباقات المستخرجة من API"""
+    """جعل الذكاء الاصطناعي يقوم بتنسيق وعرض الباقات بدون أي تدخل"""
+
     model = genai.GenerativeModel(model_name="models/gemini-2.5-pro")
 
     if not packages:
         return "⚠️ عذراً، لم يتم العثور على باقات متاحة."
-    parts = ["✅ تم جلب الباقات المتاحة:\n"]
-    for i, p in enumerate(packages, start=1):
-        info = _pick_package_fields(p)
-        parts.append(f"#{i} - {info.get('displayName') or 'بدون اسم'}")
-        parts.append(f"  • سعر الباقة: {info.get('packagePrice') if info.get('packagePrice') is not None else '-'}\n")
-        parts.append(f"  • مجموعة الموارد: {info.get('resourceGroupName') or '-'}")
-        parts.append(f"  • عدد الموظفين: {info.get('employeeNumberName') or '-'}")
-        parts.append(f"  • زيارات اسبوعية: {info.get('weeklyVisitName') or '-'}")
-        parts.append(f"  • مدة العقد: {info.get('contractDurationName') or '-'}")
-        parts.append(f"  • وردية الزيارة: {info.get('visitShiftName') or '-'}")
-        parts.append(f"  • الفاصل الزمني: {info.get('timeSlotDisplayName') or '-'}")
-        parts.append(f"  • رمز/وصف العرض: {info.get('promotionCodeDescription') or '-'}")
-    return "\n".join(parts)
 
+    cleaned_packages = [_pick_package_fields(p) for p in packages]
+
+    prompt = """
+أنت الآن مساعد متخصص في تنسيق وعرض الباقات للعملاء.
+المطلوب:
+
+- اعرض الباقات بشكل مرتب وواضح.
+- قم بترقيم الباقات (1) (2) (3) ...
+- لا تستخدم أي رموز مثل * أو - أو •
+- فقط استخدم فواصل وأسطر جديدة.
+- اللغة عربية بسيطة مفهومة.
+
+صيغة العرض المرغوبة:
+
+(1) اسم الباقة
+السعر: ...
+عدد الموظفين: ...
+مدة العقد: ...
+وهكذا بنفس الترتيب لكل باقة.
+
+هذه هي بيانات الباقات:
+"""
+
+    prompt += str(cleaned_packages)
+
+    response = model.generate_content(prompt)
+    return response.text.strip()
 def handle_shift_selection(choice: str, shifts: List[Dict[str, Any]]) -> str:
     """معالجة اختيار الموعد وحفظه - يقبل الإدخال بشكل رقم فقط أو حرف+رقم مثل A1"""
     try:

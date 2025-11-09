@@ -3,7 +3,6 @@ import os
 import json
 import time
 import requests
-from .state import FAQ_PATH
 from .save_fixed_package import save_fixed_package, write_fixed_package
 
 SERVICE_API = "https://erp.rnr.sa:8016/api/content/Search/ar/mobileServicesSection?withchildren=true"
