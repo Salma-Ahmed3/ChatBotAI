@@ -12,6 +12,8 @@ import time
 import requests
 import logging
 
+from config import FIXED_PACKAGE_API, FIXED_PACKAGE_PATH, RESOURCEGROUPS_API
+
 LOGGER = logging.getLogger(__name__)
 LOG_FMT = "%(levelname)s: %(message)s"
 if not logging.getLogger().handlers:
@@ -29,10 +31,6 @@ def _normalize_arabic_digits(s: str) -> str:
     trans.update({chr(0x06F0 + i): str(i) for i in range(10)})
     return s.translate(str.maketrans(trans))
 
-
-FIXED_PACKAGE_PATH = os.path.join(os.path.dirname(__file__), "..", "fixedPackage.json")
-RESOURCEGROUPS_API = "https://erp.rnr.sa:8005/ar/api/ResourceGroup/GetResourceGroupsByService?serviceId={}"
-FIXED_PACKAGE_API = "https://erp.rnr.sa:8005/ar/api/HourlyContract/FixedPackage"
 
 
 def _read_json_file(path: str) -> Optional[Dict[str, Any]]:

@@ -17,6 +17,10 @@ SERVICE_FOR_SERVICE_PATH = os.path.join(BASE_DIR, "ServiceForService.json")
 HOURLY_SERVICES_SHIFT_PATH = os.path.join(BASE_DIR, "HourlyServicesShift.json")
 SAVE_ADDRESS_PATH = os.path.join(BASE_DIR, "SaveAddrease.json")
 FIXED_PACKAGE_PATH = os.path.join(BASE_DIR, "fixedPackage.json")
+FIXED_PACKAGE_PATH = os.path.join(os.path.dirname(__file__), "..", "fixedPackage.json")
+RESOURCEGROUPS_API = "https://erp.rnr.sa:8005/ar/api/ResourceGroup/GetResourceGroupsByService?serviceId={}"
+FIXED_PACKAGE_API = "https://erp.rnr.sa:8005/ar/api/HourlyContract/FixedPackage"
+
 
 # Flask configuration
 class Config:
